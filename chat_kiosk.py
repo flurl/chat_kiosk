@@ -202,14 +202,14 @@ class MessageBubble(BoxLayout):
             inner.add_widget(_lbl(source, size=18, color=C_SUBTEXT))
 
         if text:
-            body = text + (' ✎' if edited else '')
+            body = text + (' (edited)' if edited else '')
             inner.add_widget(_lbl(body, size=24,
                                   halign='right' if sent else 'left'))
 
         if images:
             n = len(images)
             inner.add_widget(_lbl(
-                f'📷  {n} image{"s" if n > 1 else ""}  —  tap to view',
+                f'[ {n} image{"s" if n > 1 else ""} — tap to view ]',
                 size=20, color=C_IMG_LINK,
             ))
 
@@ -299,7 +299,7 @@ class SlideshowOverlay(FloatLayout):
             return b
 
         self.add_widget(_btn(
-            '✕', {'right': 0.99, 'top': 0.99},
+            'X', {'right': 0.99, 'top': 0.99},
             lambda: App.get_running_app().close_slideshow(),
             size=(dp(70), dp(70)), fs=30,
         ))
