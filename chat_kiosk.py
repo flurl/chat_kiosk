@@ -7,15 +7,48 @@ and shows image attachments in a tap-activated fullscreen slideshow.
 """
 
 import os
+import sys
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime
+
+# ── CLI args — must be parsed before Kivy touches sys.argv ────────────────────
+def _parse_args():
+    p = argparse.ArgumentParser(
+        description='Chat Kiosk — fullscreen Signal chat viewer',
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    p.add_argument(
+        '--fullscreen', action='store_true',
+        help='run in fullscreen mode',
+    )
+    p.add_argument(
+        '--size', metavar='WxH', default=None,
+        help='window size when not fullscreen, e.g. --size 1024x600',
+    )
+    args, remaining = p.parse_known_args()
+    sys.argv = [sys.argv[0]] + remaining   # strip our flags before Kivy sees them
+    return args
+
+_args = _parse_args()
 
 import kivy
 kivy.require('2.0.0')
 
 from kivy.config import Config
-Config.set('graphics', 'fullscreen', 'auto')
+if _args.fullscreen:
+    Config.set('graphics', 'fullscreen', 'auto')
+else:
+    Config.set('graphics', 'fullscreen', '0')
+    if _args.size:
+        try:
+            w, h = _args.size.lower().split('x')
+            Config.set('graphics', 'width',  w.strip())
+            Config.set('graphics', 'height', h.strip())
+        except ValueError:
+            print(f'[WARN] invalid --size value "{_args.size}", expected WxH e.g. 1024x600',
+                  file=sys.stderr)
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
 
 from kivy.app import App
@@ -52,17 +85,17 @@ SLIDESHOW_INTERVAL = 4.0   # seconds per slide during auto-advance
 #  Colour palette  (dark theme)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-C_BG         = (0.08, 0.08, 0.10, 1)
-C_SENT       = (0.18, 0.45, 0.75, 1)   # outgoing bubble
-C_RECV       = (0.22, 0.22, 0.26, 1)   # incoming bubble
-C_TEXT       = (0.95, 0.95, 0.95, 1)
-C_SUBTEXT    = (0.55, 0.55, 0.60, 1)
-C_INPUT_BG   = (0.13, 0.13, 0.16, 1)
-C_SEND_BTN   = (0.18, 0.50, 0.85, 1)
-C_OVERLAY_BG = (0.00, 0.00, 0.00, 0.92)
-C_IMG_LINK   = (0.45, 0.75, 1.00, 1)
+C_BG         = (0.10, 0.10, 0.13, 1)
+C_SENT       = (0.12, 0.42, 0.36, 1)   # outgoing bubble  — warm teal
+C_RECV       = (0.26, 0.26, 0.31, 1)   # incoming bubble  — medium warm grey
+C_TEXT       = (1.00, 1.00, 1.00, 1)   # pure white for maximum contrast
+C_SUBTEXT    = (0.86, 0.86, 0.88, 1)   # near-white — readable on any bubble
+C_INPUT_BG   = (0.16, 0.16, 0.20, 1)
+C_SEND_BTN   = (0.12, 0.52, 0.38, 1)   # matches sent-bubble teal
+C_OVERLAY_BG = (0.00, 0.00, 0.00, 0.94)
+C_IMG_LINK   = (0.65, 0.92, 1.00, 1)   # bright sky-blue, visible on both bubbles
 
-BUBBLE_WIDTH_FRAC = 0.72   # max fraction of screen width per bubble
+BUBBLE_WIDTH_FRAC = 0.74   # max fraction of screen width per bubble
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -140,19 +173,19 @@ class MessageBubble(BoxLayout):
             time_str = ''
 
         bub_w   = Window.width * BUBBLE_WIDTH_FRAC
-        inner_w = bub_w - dp(24)
+        inner_w = bub_w - dp(40)
 
         # ── inner GridLayout (its minimum_height drives the bubble height) ──
         inner = GridLayout(
             cols=1,
             size_hint=(None, None),
             width=bub_w,
-            spacing=dp(3),
-            padding=(dp(12), dp(8)),
+            spacing=dp(6),
+            padding=(dp(20), dp(14)),
         )
         inner.bind(minimum_height=inner.setter('height'))
 
-        def _lbl(txt, size=16, color=C_TEXT, halign='left'):
+        def _lbl(txt, size=24, color=C_TEXT, halign='left'):
             w = Label(
                 text=txt,
                 font_size=sp(size),
@@ -166,26 +199,26 @@ class MessageBubble(BoxLayout):
             return w
 
         if not sent and source:
-            inner.add_widget(_lbl(source, size=11, color=C_SUBTEXT))
+            inner.add_widget(_lbl(source, size=18, color=C_SUBTEXT))
 
         if text:
             body = text + (' ✎' if edited else '')
-            inner.add_widget(_lbl(body, size=16,
+            inner.add_widget(_lbl(body, size=24,
                                   halign='right' if sent else 'left'))
 
         if images:
             n = len(images)
             inner.add_widget(_lbl(
                 f'📷  {n} image{"s" if n > 1 else ""}  —  tap to view',
-                size=13, color=C_IMG_LINK,
+                size=20, color=C_IMG_LINK,
             ))
 
-        inner.add_widget(_lbl(time_str, size=11, color=C_SUBTEXT, halign='right'))
+        inner.add_widget(_lbl(time_str, size=17, color=C_SUBTEXT, halign='right'))
 
         # ── rounded background ──────────────────────────────────────────────
         with inner.canvas.before:
             Color(*(C_SENT if sent else C_RECV))
-            bubble_bg = RoundedRectangle(radius=[dp(14)])
+            bubble_bg = RoundedRectangle(radius=[dp(18)])
         inner.bind(
             pos =lambda w, v: setattr(bubble_bg, 'pos',  v),
             size=lambda w, v: setattr(bubble_bg, 'size', v),
@@ -248,13 +281,13 @@ class SlideshowOverlay(FloatLayout):
 
         # slide counter  "2 / 4"
         self._ctr = Label(
-            size_hint=(1, None), height=dp(30),
+            size_hint=(1, None), height=dp(44),
             pos_hint={'center_x': 0.5, 'top': 0.97},
-            font_size=sp(15), color=C_TEXT,
+            font_size=sp(22), color=C_TEXT,
         )
         self.add_widget(self._ctr)
 
-        def _btn(text, pos_hint, callback, size=(dp(60), dp(84)), fs=36):
+        def _btn(text, pos_hint, callback, size=(dp(80), dp(110)), fs=48):
             b = Button(
                 text=text, font_size=sp(fs),
                 size_hint=(None, None), size=size,
@@ -268,7 +301,7 @@ class SlideshowOverlay(FloatLayout):
         self.add_widget(_btn(
             '✕', {'right': 0.99, 'top': 0.99},
             lambda: App.get_running_app().close_slideshow(),
-            size=(dp(52), dp(52)), fs=22,
+            size=(dp(70), dp(70)), fs=30,
         ))
         self.add_widget(_btn('‹', {'x': 0.01, 'center_y': 0.5},
                              lambda: self._go(self._idx - 1)))
@@ -318,8 +351,8 @@ class ChatScreen(BoxLayout):
         self._list = GridLayout(
             cols=1,
             size_hint=(1, None),
-            spacing=dp(4),
-            padding=(dp(8), dp(8)),
+            spacing=dp(8),
+            padding=(dp(12), dp(12)),
         )
         self._list.bind(minimum_height=self._list.setter('height'))
         scroll.add_widget(self._list)
@@ -328,8 +361,8 @@ class ChatScreen(BoxLayout):
 
         # ── input bar ───────────────────────────────────────────────────────
         bar = BoxLayout(
-            size_hint=(1, None), height=dp(64),
-            padding=(dp(8), dp(10)), spacing=dp(8),
+            size_hint=(1, None), height=dp(86),
+            padding=(dp(12), dp(12)), spacing=dp(10),
         )
         with bar.canvas.before:
             Color(*C_INPUT_BG)
@@ -343,18 +376,18 @@ class ChatScreen(BoxLayout):
             hint_text='Type a message…',
             multiline=False,
             size_hint=(1, 1),
-            font_size=sp(16),
+            font_size=sp(22),
             foreground_color=C_TEXT,
             background_color=(*C_BG[:3], 1),
             cursor_color=C_TEXT,
-            padding=(dp(12), dp(10)),
+            padding=(dp(16), dp(14)),
         )
         self._input.bind(on_text_validate=self._send)
 
         send_btn = Button(
             text='Send',
-            size_hint=(None, 1), width=dp(88),
-            font_size=sp(16),
+            size_hint=(None, 1), width=dp(120),
+            font_size=sp(22),
             background_color=C_SEND_BTN,
             background_normal='',
         )
@@ -386,7 +419,8 @@ class ChatKioskApp(App):
     title = 'Chat Kiosk'
 
     def build(self):
-        Window.fullscreen = 'auto'
+        if _args.fullscreen:
+            Window.fullscreen = 'auto'
         Window.clearcolor = C_BG
 
         self._root    = FloatLayout()
