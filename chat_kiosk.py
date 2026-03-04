@@ -77,8 +77,13 @@ MESSAGES_FILE = Path(
     "/messages.jsonl"
 )
 ATTACHMENTS_DIR    = MESSAGES_FILE.parent / "attachments"
+OUTBOX_DIR         = Path(
+    "/home/flurl/raid/development/poga/pothead/plugins/filesender/outbox"
+    "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
+)
 POLL_INTERVAL      = 1.0   # seconds between file-change checks
 SLIDESHOW_INTERVAL = 4.0   # seconds per slide during auto-advance
+QUICK_MESSAGES     = ['Yes', 'No', 'Perhaps']
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,7 +97,9 @@ C_TEXT       = (1.00, 1.00, 1.00, 1)   # pure white for maximum contrast
 C_SUBTEXT    = (0.86, 0.86, 0.88, 1)   # near-white — readable on any bubble
 C_INPUT_BG   = (0.16, 0.16, 0.20, 1)
 C_SEND_BTN   = (0.12, 0.52, 0.38, 1)   # matches sent-bubble teal
+C_PENDING    = (0.55, 0.30, 0.05, 1)   # pending bubble  — burnt orange
 C_OVERLAY_BG = (0.00, 0.00, 0.00, 0.94)
+C_QUICK_HL   = (0.16, 0.52, 0.72, 1)   # quick-message selected  — steel blue
 C_IMG_LINK   = (0.65, 0.92, 1.00, 1)   # bright sky-blue, visible on both bubbles
 
 BUBBLE_WIDTH_FRAC = 0.74   # max fraction of screen width per bubble
@@ -213,11 +220,15 @@ class MessageBubble(BoxLayout):
                 size=20, color=C_IMG_LINK,
             ))
 
-        inner.add_widget(_lbl(time_str, size=17, color=C_SUBTEXT, halign='right'))
+        if msg.get('pending'):
+            inner.add_widget(_lbl('Sending...', size=17, color=C_IMG_LINK, halign='right'))
+        else:
+            inner.add_widget(_lbl(time_str, size=17, color=C_SUBTEXT, halign='right'))
 
         # ── rounded background ──────────────────────────────────────────────
+        pending = msg.get('pending', False)
         with inner.canvas.before:
-            Color(*(C_SENT if sent else C_RECV))
+            Color(*(C_PENDING if pending else (C_SENT if sent else C_RECV)))
             bubble_bg = RoundedRectangle(radius=[dp(18)])
         inner.bind(
             pos =lambda w, v: setattr(bubble_bg, 'pos',  v),
@@ -227,7 +238,7 @@ class MessageBubble(BoxLayout):
         # ── alignment container ─────────────────────────────────────────────
         anchor = AnchorLayout(
             size_hint=(1, None),
-            anchor_x='right' if sent else 'left',
+            anchor_x='center' if pending else ('right' if sent else 'left'),
             anchor_y='top',
         )
         anchor.add_widget(inner)
@@ -326,6 +337,94 @@ class SlideshowOverlay(FloatLayout):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Quick-message overlay  (M key)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class QuickMessageOverlay(FloatLayout):
+    """Full-screen overlay for picking and sending a predefined message."""
+
+    def __init__(self, messages: list[str], on_send, on_close, **kwargs):
+        super().__init__(**kwargs)
+        self._messages = messages
+        self._on_send  = on_send
+        self._on_close = on_close
+        self._sel      = 0
+        self._btns: list[Button] = []
+
+        with self.canvas.before:
+            Color(*C_OVERLAY_BG)
+            _bg = Rectangle()
+        self.bind(
+            pos =lambda w, v: setattr(_bg, 'pos',  v),
+            size=lambda w, v: setattr(_bg, 'size', v),
+        )
+
+        n       = len(messages)
+        btn_h   = dp(72)
+        spc     = dp(14)
+        title_h = dp(60)
+        hint_h  = dp(38)
+        pad_v   = dp(28)
+        # BoxLayout spacing fires between each of the (n+2) children → (n+1) gaps
+        box_h   = title_h + n * btn_h + hint_h + (n + 1) * spc + 2 * pad_v
+
+        box = BoxLayout(
+            orientation='vertical',
+            size_hint=(0.55, None),
+            height=box_h,
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            spacing=spc,
+            padding=(dp(24), pad_v),
+        )
+
+        title = Label(
+            text='Quick Messages',
+            font_size=sp(28),
+            color=C_TEXT,
+            size_hint=(1, None),
+            height=title_h,
+        )
+        box.add_widget(title)
+
+        for i, msg in enumerate(messages):
+            btn = Button(
+                text=msg,
+                font_size=sp(26),
+                size_hint=(1, None),
+                height=btn_h,
+                background_normal='',
+                background_color=C_QUICK_HL if i == 0 else C_RECV,
+            )
+            btn.bind(on_release=lambda _b, m=msg: self._on_send(m))
+            self._btns.append(btn)
+            box.add_widget(btn)
+
+        hint = Label(
+            text='[UP] / [DOWN]  navigate     [ENTER]  send     [ESC]  close',
+            font_size=sp(16),
+            color=C_SUBTEXT,
+            size_hint=(1, None),
+            height=hint_h,
+        )
+        box.add_widget(hint)
+
+        self.add_widget(box)
+
+    def move(self, delta: int):
+        self._btns[self._sel].background_color = C_RECV
+        self._sel = (self._sel + delta) % len(self._messages)
+        self._btns[self._sel].background_color = C_QUICK_HL
+
+    def selected_text(self) -> str:
+        return self._messages[self._sel]
+
+    def on_touch_down(self, touch):
+        if not super().on_touch_down(touch):
+            self._on_close()
+        return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Main chat screen
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -397,8 +496,10 @@ class ChatScreen(BoxLayout):
         bar.add_widget(send_btn)
         self.add_widget(bar)
 
-    def add_message(self, msg: dict):
-        self._list.add_widget(MessageBubble(msg))
+    def add_message(self, msg: dict) -> 'MessageBubble':
+        bubble = MessageBubble(msg)
+        self._list.add_widget(bubble)
+        return bubble
 
     def scroll_bottom(self):
         Clock.schedule_once(lambda _: setattr(self._scroll, 'scroll_y', 0), 0.15)
@@ -406,9 +507,8 @@ class ChatScreen(BoxLayout):
     def _send(self, *_):
         text = self._input.text.strip()
         if text:
-            # TODO: implement actual message sending
-            print(f'[SEND] {text}', flush=True)
             self._input.text = ''
+            App.get_running_app().send_message(text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -423,9 +523,11 @@ class ChatKioskApp(App):
             Window.fullscreen = 'auto'
         Window.clearcolor = C_BG
 
-        self._root    = FloatLayout()
-        self._chat    = ChatScreen(size_hint=(1, 1))
-        self._overlay = None
+        self._root          = FloatLayout()
+        self._chat          = ChatScreen(size_hint=(1, 1))
+        self._overlay       = None
+        self._pending       = {}    # outbox Path → pending MessageBubble
+        self._quick_overlay = None
         self._root.add_widget(self._chat)
 
         msgs = load_messages(MESSAGES_FILE)
@@ -436,10 +538,38 @@ class ChatKioskApp(App):
         self._chat.scroll_bottom()
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
+        Window.bind(on_key_down=self._on_key_down)
         return self._root
+
+    # ── outbox / send ────────────────────────────────────────────────────────
+    def send_message(self, text: str):
+        ts = int(datetime.now().timestamp() * 1000)
+        outfile = OUTBOX_DIR / f'{ts}.md'
+        try:
+            OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+            outfile.write_text(text, encoding='utf-8')
+        except OSError as e:
+            print(f'[ERROR] could not write outbox file: {e}', file=sys.stderr)
+            return
+        msg = {
+            'type': 'chat',
+            'timestamp': ts,
+            'text': text,
+            'is_synced': True,
+            'pending': True,
+        }
+        bubble = self._chat.add_message(msg)
+        self._chat.scroll_bottom()
+        self._pending[outfile] = bubble
 
     # ── file polling ────────────────────────────────────────────────────────
     def _poll(self, _dt):
+        # Remove pending bubbles whose outbox files have been deleted
+        for outfile in list(self._pending.keys()):
+            if not outfile.exists():
+                bubble = self._pending.pop(outfile)
+                self._chat._list.remove_widget(bubble)
+
         if not MESSAGES_FILE.exists():
             return
         size = MESSAGES_FILE.stat().st_size
@@ -459,6 +589,50 @@ class ChatKioskApp(App):
         self._loaded += len(new)
         if new:
             self._chat.scroll_bottom()
+
+    def on_stop(self):
+        Window.unbind(on_key_down=self._on_key_down)
+
+    # ── keyboard ─────────────────────────────────────────────────────────────
+    def _on_key_down(self, _win, key, _sc, _cp, _mod):
+        if self._quick_overlay is not None:
+            if key == 273:                              # up
+                self._quick_overlay.move(-1)
+                return True
+            if key == 274:                              # down
+                self._quick_overlay.move(1)
+                return True
+            if key == 13:                               # enter
+                text = self._quick_overlay.selected_text()
+                self.close_quick_messages()
+                self.send_message(text)
+                return True
+            if key == 27:                               # escape
+                self.close_quick_messages()
+                return True
+        elif key == ord('m') and not self._chat._input.focus:
+            self.open_quick_messages()
+            return True
+        return False
+
+    # ── quick-message overlay ─────────────────────────────────────────────────
+    def open_quick_messages(self):
+        self._quick_overlay = QuickMessageOverlay(
+            QUICK_MESSAGES,
+            on_send=self._quick_send,
+            on_close=self.close_quick_messages,
+            size_hint=(1, 1),
+        )
+        self._root.add_widget(self._quick_overlay)
+
+    def close_quick_messages(self):
+        if self._quick_overlay:
+            self._root.remove_widget(self._quick_overlay)
+            self._quick_overlay = None
+
+    def _quick_send(self, text: str):
+        self.close_quick_messages()
+        self.send_message(text)
 
     # ── slideshow control ────────────────────────────────────────────────────
     def open_slideshow(self, paths: list[str]):
