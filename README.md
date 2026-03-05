@@ -7,13 +7,15 @@ Reads messages from a Signal-format JSONL archive, watches for new ones in real 
 ## Features
 
 - Dark-themed, fullscreen kiosk mode
-- Chat bubbles — outgoing (right/blue) and incoming (left/grey)
+- Chat bubbles — outgoing (right/teal), incoming (left/grey), pending (centre/orange)
 - Handles message edits and deletes from the archive
 - Tap any message with images to open a fullscreen slideshow
 - Incoming messages with images automatically trigger the slideshow
 - Scrollable message history, auto-scrolls to latest message
-- Text input bar with Send button (stub — prints to console)
-- Polls the JSONL file every second for new messages
+- Text input bar with Send button — writes message to an outbox file for delivery
+- Sent messages shown immediately as a "Sending…" bubble; replaced by the archived copy once delivered
+- Quick-message overlay (press `M`) — pick a predefined reply with arrow keys and Enter
+- Polls the JSONL archive every second for new messages
 
 ## Requirements
 
@@ -43,20 +45,36 @@ python3 -m venv .venv
 
 Edit the constants at the top of `chat_kiosk.py`:
 
-| Constant            | Default                        | Description                              |
-|---------------------|--------------------------------|------------------------------------------|
-| `MESSAGES_FILE`     | path to `messages.jsonl`       | Full path to the JSONL archive file      |
-| `ATTACHMENTS_DIR`   | `<archive dir>/attachments/`   | Directory containing attachment files    |
-| `POLL_INTERVAL`     | `1.0`                          | Seconds between file-change checks       |
-| `SLIDESHOW_INTERVAL`| `4.0`                          | Seconds per slide during auto-advance    |
+| Constant            | Default                        | Description                                        |
+|---------------------|--------------------------------|----------------------------------------------------|
+| `MESSAGES_FILE`     | path to `messages.jsonl`       | Full path to the JSONL archive file                |
+| `ATTACHMENTS_DIR`   | `<archive dir>/attachments/`   | Directory containing attachment files              |
+| `OUTBOX_DIR`        | path to outbox directory       | Directory where outgoing message files are written |
+| `POLL_INTERVAL`     | `1.0`                          | Seconds between file-change checks                 |
+| `SLIDESHOW_INTERVAL`| `4.0`                          | Seconds per slide during auto-advance              |
+| `QUICK_MESSAGES`    | `['Yes', 'No', 'Perhaps']`     | Predefined replies shown in the quick-message overlay |
 
 ## Running
 
 ```bash
-.venv/bin/python chat_kiosk.py
+.venv/bin/python chat_kiosk.py [--fullscreen] [--size WxH]
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--fullscreen` | Run in fullscreen mode |
+| `--size WxH` | Set window size when not fullscreen, e.g. `--size 1024x600` |
+
 To exit fullscreen during development, press `F11` or `Escape`.
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `M` | Open quick-message overlay (only when text input is not focused) |
+| `↑` / `↓` | Navigate items in the quick-message overlay (wraps around) |
+| `Enter` | Send the selected quick message |
+| `Esc` | Close the quick-message overlay without sending |
 
 ## Archive format
 
@@ -78,7 +96,13 @@ Attachment files are expected at:
 
 ## Sending messages
 
-Sending is currently a stub — the text is printed to stdout with a `[SEND]` prefix. Actual delivery (e.g. via Signal CLI or an HTTP API) will be wired in later.
+When the user sends a message (via the input bar or the quick-message overlay), the kiosk writes it as a Markdown file into `OUTBOX_DIR`:
+
+```
+<outbox_dir>/<timestamp_ms>.md
+```
+
+An external process is expected to pick up the file, deliver it, and delete it. While the file exists the message is shown as a centred orange "Sending…" bubble. Once the file is deleted the kiosk removes the pending bubble; the delivered message will appear as a normal outgoing bubble when the archive is updated.
 
 ## Project structure
 
