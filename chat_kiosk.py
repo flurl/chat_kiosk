@@ -341,12 +341,20 @@ class SlideshowOverlay(FloatLayout):
             size=(dp(70), dp(70)), fs=30,
         ))
         self.add_widget(_btn('‹', {'x': 0.01, 'center_y': 0.5},
-                             lambda: self._go(self._idx - 1)))
+                             lambda: self._manual_go(self._idx - 1)))
         self.add_widget(_btn('›', {'right': 0.99, 'center_y': 0.5},
-                             lambda: self._go(self._idx + 1)))
+                             lambda: self._manual_go(self._idx + 1)))
 
         self._go(0)
         if len(paths) > 1:
+            self._timer = Clock.schedule_interval(
+                lambda _: self._go(self._idx + 1), SLIDESHOW_INTERVAL)
+
+    def _manual_go(self, idx: int):
+        """Navigate manually and reset the auto-advance timer."""
+        self._go(idx)
+        if self._timer:
+            self._timer.cancel()
             self._timer = Clock.schedule_interval(
                 lambda _: self._go(self._idx + 1), SLIDESHOW_INTERVAL)
 
