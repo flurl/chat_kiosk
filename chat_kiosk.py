@@ -302,11 +302,14 @@ class MessageBubble(BoxLayout):
 class SlideshowOverlay(FloatLayout):
     """Full-screen image carousel shown on top of the chat."""
 
-    def __init__(self, paths: list[str], **kwargs):
+    def __init__(self, galleries: list[list[str]], gallery_idx: int = 0, **kwargs):
         super().__init__(**kwargs)
-        self._paths = paths
-        self._idx   = 0
-        self._timer = None
+        self._galleries   = galleries
+        self._gallery_idx = gallery_idx
+        self._paths       = galleries[gallery_idx] if galleries else []
+        self._idx         = 0
+        self._at_end      = False
+        self._timer       = None
 
         # dim background
         with self.canvas.before:
@@ -369,16 +372,49 @@ class SlideshowOverlay(FloatLayout):
         self.add_widget(legend)
 
         self._go(0)
-        if len(paths) > 1:
+        if len(self._paths) > 1:
             self._timer = Clock.schedule_interval(
                 lambda _: self._go(self._idx + 1), SLIDESHOW_INTERVAL)
 
+    def _switch_gallery(self, gallery_idx: int):
+        self._gallery_idx = gallery_idx
+        self._paths       = self._galleries[gallery_idx]
+
+    def _show_end(self):
+        """Show an end-of-galleries message and set the sentinel index."""
+        self._at_end      = True
+        self._idx         = len(self._paths)   # one past end — used by left-press calc
+        self._img.source  = ''
+        self._ctr.text    = 'No more images'
+
     def _manual_go(self, idx: int):
         """Navigate manually and stop the auto-advance timer."""
-        self._go(idx)
         if self._timer:
             self._timer.cancel()
             self._timer = None
+
+        if self._at_end:
+            # Left press (idx == len-1) exits end state; right press ignored
+            if idx < len(self._paths):
+                self._at_end = False
+                self._go(idx)
+            return
+
+        if idx >= len(self._paths):
+            next_gi = self._gallery_idx + 1
+            if next_gi < len(self._galleries):
+                self._switch_gallery(next_gi)
+                self._go(0)
+            else:
+                self._show_end()
+        elif idx < 0:
+            prev_gi = self._gallery_idx - 1
+            if prev_gi >= 0:
+                self._switch_gallery(prev_gi)
+                self._go(len(self._paths) - 1)
+            # else: already at first gallery, do nothing
+        else:
+            self._go(idx)
 
     def _go(self, idx: int):
         self._idx = idx % len(self._paths)
@@ -591,6 +627,7 @@ class ChatKioskApp(App):
             self._chat.add_message(m)
         self._loaded    = len(msgs)
         self._file_size = MESSAGES_FILE.stat().st_size if MESSAGES_FILE.exists() else 0
+        self._galleries = self._collect_galleries(msgs)
         self._chat.scroll_bottom()
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
@@ -646,6 +683,7 @@ class ChatKioskApp(App):
                     [str(attachment_path(m['timestamp'], a)) for a in imgs])
         self._loaded += len(new)
         if new:
+            self._galleries = self._collect_galleries(msgs)
             self._chat.scroll_bottom()
 
     def on_stop(self):
@@ -720,10 +758,22 @@ class ChatKioskApp(App):
         self.close_quick_messages()
         self.send_message(text)
 
+    # ── gallery helpers ───────────────────────────────────────────────────────
+    @staticmethod
+    def _collect_galleries(msgs: list[dict]) -> list[list[str]]:
+        result = []
+        for m in msgs:
+            imgs = image_attachments(m)
+            if imgs:
+                result.append([str(attachment_path(m['timestamp'], a)) for a in imgs])
+        return list(reversed(result))
+
     # ── slideshow control ────────────────────────────────────────────────────
     def open_slideshow(self, paths: list[str]):
         self.close_slideshow()
-        self._overlay = SlideshowOverlay(paths, size_hint=(1, 1))
+        gallery_idx = next(
+            (i for i, g in enumerate(self._galleries) if g == paths), 0)
+        self._overlay = SlideshowOverlay(self._galleries, gallery_idx, size_hint=(1, 1))
         self._root.add_widget(self._overlay)
 
     def close_slideshow(self):
