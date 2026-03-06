@@ -68,12 +68,11 @@ Current shortcut legend by mode:
 **Normal mode**
 | Input | Key | Action |
 |---|---|---|
-| ⚪ | Enter | (no-op in normal mode) |
-| 🔵 | ← | (no-op in normal mode) |
-| 🟡 | → | (no-op in normal mode) |
-| ↺ | ↑ | (no-op in normal mode) |
-| ↻ | ↓ | (no-op in normal mode) |
-| keyboard `M` | — | Open quick-message overlay |
+| ⚪ | Enter | Open quick-message overlay (only when text input is not focused) |
+| 🔵 | ← | (no-op) |
+| 🟡 | → | Open gallery (newest message with images) |
+| ↺ | ↑ | (no-op) |
+| ↻ | ↓ | (no-op) |
 
 **Slideshow overlay**
 | Input | Key | Action |

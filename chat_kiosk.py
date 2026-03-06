@@ -588,6 +588,19 @@ class ChatScreen(BoxLayout):
         bar.add_widget(send_btn)
         self.add_widget(bar)
 
+        # ── legend ──────────────────────────────────────────────────────────
+        legend = Label(
+            text='[color=ffdd00]●[/color] [→] Open gallery     [color=ffffff]●[/color] [Ent] Quick messages',
+            markup=True,
+            font_size=sp(18),
+            color=C_SUBTEXT,
+            size_hint=(1, None),
+            height=dp(30),
+            halign='center',
+            valign='middle',
+        )
+        self.add_widget(legend)
+
     def add_message(self, msg: dict) -> 'MessageBubble':
         bubble = MessageBubble(msg)
         self._list.add_widget(bubble)
@@ -734,8 +747,11 @@ class ChatKioskApp(App):
             if key == 27:                               # escape
                 self.close_quick_messages()
                 return True
-        elif key == ord('m') and not self._chat._input.focus:
+        elif key == 13 and not self._chat._input.focus:   # enter
             self.open_quick_messages()
+            return True
+        elif key == 275 and self._galleries:            # right arrow — open first gallery
+            self.open_slideshow(self._galleries[0])
             return True
         return False
 
