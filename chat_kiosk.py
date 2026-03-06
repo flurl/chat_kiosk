@@ -51,6 +51,16 @@ else:
                   file=sys.stderr)
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
 
+from kivy.core.text import LabelBase
+_DEJAVU = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
+_DEJAVU_BOLD = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
+if _DEJAVU.exists():
+    LabelBase.register(
+        name='Roboto',
+        fn_regular=str(_DEJAVU),
+        fn_bold=str(_DEJAVU_BOLD) if _DEJAVU_BOLD.exists() else None,
+    )
+
 from kivy.app import App
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
@@ -344,6 +354,19 @@ class SlideshowOverlay(FloatLayout):
                              lambda: self._manual_go(self._idx - 1)))
         self.add_widget(_btn('›', {'right': 0.99, 'center_y': 0.5},
                              lambda: self._manual_go(self._idx + 1)))
+
+        legend = Label(
+            text='[color=ffffff]●[/color] [Ent] Close     [color=4499ff]●[/color] [←] Previous     [color=ffdd00]●[/color] [→] Next',
+            markup=True,
+            font_size=sp(20),
+            color=C_SUBTEXT,
+            size_hint=(1, None),
+            height=dp(36),
+            pos_hint={'center_x': 0.5, 'y': 0.01},
+            halign='center',
+            valign='middle',
+        )
+        self.add_widget(legend)
 
         self._go(0)
         if len(paths) > 1:
@@ -655,7 +678,7 @@ class ChatKioskApp(App):
             if key == 275:                              # right arrow
                 self._overlay._manual_go(self._overlay._idx + 1)
                 return True
-            if key == 27:                               # escape
+            if key in (13, 27):                         # enter or escape
                 self.close_slideshow()
                 return True
         if self._quick_overlay is not None:
