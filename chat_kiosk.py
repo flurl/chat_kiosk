@@ -72,13 +72,13 @@ from kivy.metrics import dp, sp
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MESSAGES_FILE = Path(
-    "/home/flurl/development/poga/pothead/plugins/archiver/archives"
+    "/home/senior/senior-connect-box/pothead/plugins/archiver/archives"
     "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
     "/messages.jsonl"
 )
 ATTACHMENTS_DIR    = MESSAGES_FILE.parent / "attachments"
 OUTBOX_DIR         = Path(
-    "/home/flurl/raid/development/poga/pothead/plugins/filesender/outbox"
+    "/home/senior/senior-connect-box/pothead/plugins/filesender/outbox"
     "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
 )
 POLL_INTERVAL      = 1.0   # seconds between file-change checks
@@ -170,7 +170,7 @@ class MessageBubble(BoxLayout):
         sent   = msg.get('is_synced', False)   # synced = sent from our account
         text   = msg.get('text') or ''
         ts     = msg.get('timestamp', 0)
-        source = msg.get('source', '')
+        source = msg.get('source_name') or msg.get('source', '')
         edited = msg.get('edited', False)
         images = image_attachments(msg)
 
@@ -205,8 +205,9 @@ class MessageBubble(BoxLayout):
             w.bind(texture_size=lambda inst, val: setattr(inst, 'height', val[1]))
             return w
 
-        if not sent and source:
-            inner.add_widget(_lbl(source, size=18, color=C_SUBTEXT))
+        display_name = source or ('Me' if sent else '')
+        if display_name:
+            inner.add_widget(_lbl(display_name, size=18, color=C_SUBTEXT))
 
         if text:
             body = text + (' (edited)' if edited else '')
@@ -539,6 +540,8 @@ class ChatKioskApp(App):
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
         Window.bind(on_key_down=self._on_key_down)
+        Window.bind(on_joy_hat=self._on_joy_hat)
+        Window.bind(on_joy_button_down=self._on_joy_button_down)
         return self._root
 
     # ── outbox / send ────────────────────────────────────────────────────────
@@ -592,6 +595,20 @@ class ChatKioskApp(App):
 
     def on_stop(self):
         Window.unbind(on_key_down=self._on_key_down)
+        Window.unbind(on_joy_hat=self._on_joy_hat)
+        Window.unbind(on_joy_button_down=self._on_joy_button_down)
+
+    # ── joystick ─────────────────────────────────────────────────────────────
+    def _on_joy_hat(self, _win, _stick, _hat, value):
+        x, y = value
+        if y == -1:
+            self._on_key_down(None, 273, 0, None, [])   # up arrow
+        elif y == 1:
+            self._on_key_down(None, 274, 0, None, [])   # down arrow
+
+    def _on_joy_button_down(self, _win, _stick, button):
+        if button == 0:
+            self._on_key_down(None, ord('m'), 0, 'm', [])  # M key
 
     # ── keyboard ─────────────────────────────────────────────────────────────
     def _on_key_down(self, _win, key, _sc, _cp, _mod):
