@@ -351,12 +351,11 @@ class SlideshowOverlay(FloatLayout):
                 lambda _: self._go(self._idx + 1), SLIDESHOW_INTERVAL)
 
     def _manual_go(self, idx: int):
-        """Navigate manually and reset the auto-advance timer."""
+        """Navigate manually and stop the auto-advance timer."""
         self._go(idx)
         if self._timer:
             self._timer.cancel()
-            self._timer = Clock.schedule_interval(
-                lambda _: self._go(self._idx + 1), SLIDESHOW_INTERVAL)
+            self._timer = None
 
     def _go(self, idx: int):
         self._idx = idx % len(self._paths)
