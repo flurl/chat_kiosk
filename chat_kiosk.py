@@ -644,6 +644,16 @@ class ChatKioskApp(App):
 
     # ── keyboard ─────────────────────────────────────────────────────────────
     def _on_key_down(self, _win, key, _sc, _cp, _mod):
+        if self._overlay is not None:
+            if key == 276:                              # left arrow
+                self._overlay._manual_go(self._overlay._idx - 1)
+                return True
+            if key == 275:                              # right arrow
+                self._overlay._manual_go(self._overlay._idx + 1)
+                return True
+            if key == 27:                               # escape
+                self.close_slideshow()
+                return True
         if self._quick_overlay is not None:
             if key == 273:                              # up
                 self._quick_overlay.move(-1)
