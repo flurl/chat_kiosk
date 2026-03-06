@@ -215,11 +215,36 @@ class MessageBubble(BoxLayout):
                                   halign='right' if sent else 'left'))
 
         if images:
-            n = len(images)
-            inner.add_widget(_lbl(
-                f'[ {n} image{"s" if n > 1 else ""} — tap to view ]',
-                size=20, color=C_IMG_LINK,
-            ))
+            MAX_THUMBS = 3
+            thumb_h = dp(80)
+            shown = images[:MAX_THUMBS]
+            extra = len(images) - len(shown)
+
+            row = BoxLayout(
+                orientation='horizontal',
+                size_hint=(1, None),
+                height=thumb_h,
+                spacing=dp(6),
+            )
+            for att in shown:
+                p = str(attachment_path(ts, att))
+                row.add_widget(Image(
+                    source=p if os.path.exists(p) else '',
+                    size_hint=(None, 1),
+                    width=thumb_h,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                ))
+            if extra > 0:
+                row.add_widget(Label(
+                    text=f'+{extra} more',
+                    font_size=sp(18),
+                    color=C_IMG_LINK,
+                    size_hint=(1, 1),
+                    halign='left',
+                    valign='middle',
+                ))
+            inner.add_widget(row)
 
         if msg.get('pending'):
             inner.add_widget(_lbl('Sending...', size=17, color=C_IMG_LINK, halign='right'))
