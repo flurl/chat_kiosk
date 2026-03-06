@@ -640,7 +640,11 @@ class ChatKioskApp(App):
 
     def _on_joy_button_down(self, _win, _stick, button):
         if button == 0:
-            self._on_key_down(None, ord('m'), 0, 'm', [])  # M key
+            self._on_key_down(None, 13, 0, None, [])    # enter
+        elif button == 1:
+            self._on_key_down(None, 276, 0, None, [])   # left arrow
+        elif button == 2:
+            self._on_key_down(None, 275, 0, None, [])   # right arrow
 
     # ── keyboard ─────────────────────────────────────────────────────────────
     def _on_key_down(self, _win, key, _sc, _cp, _mod):
