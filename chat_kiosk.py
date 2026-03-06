@@ -492,7 +492,8 @@ class QuickMessageOverlay(FloatLayout):
             box.add_widget(btn)
 
         hint = Label(
-            text='[UP] / [DOWN]  navigate     [ENTER]  send     [ESC]  close',
+            text='[color=4499ff]●[/color] [←] Close     ↺↻ [↑↓] Navigate     [color=ffffff]●[/color] [Ent] Send',
+            markup=True,
             font_size=sp(16),
             color=C_SUBTEXT,
             size_hint=(1, None),
@@ -744,7 +745,7 @@ class ChatKioskApp(App):
                 self.close_quick_messages()
                 self.send_message(text)
                 return True
-            if key == 27:                               # escape
+            if key in (27, 276):                        # escape or left arrow
                 self.close_quick_messages()
                 return True
         elif key == 13 and not self._chat._input.focus:   # enter

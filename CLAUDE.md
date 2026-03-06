@@ -85,6 +85,6 @@ Current shortcut legend by mode:
 | Input | Key | Action |
 |---|---|---|
 | ⚪ | Enter | Send selected message |
+| 🔵 | ← | Close without sending |
 | ↺ | ↑ | Select previous message |
 | ↻ | ↓ | Select next message |
-| keyboard Esc | Esc | Close without sending |
