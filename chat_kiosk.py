@@ -81,12 +81,11 @@ from kivy.metrics import dp, sp
 #  Configuration  — edit these paths for your deployment
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MESSAGES_FILE = Path(
+ARCHIVE_DIR = Path(
     "/home/senior/senior-connect-box/pothead/plugins/archiver/archives"
     "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
-    "/messages.jsonl"
 )
-ATTACHMENTS_DIR    = MESSAGES_FILE.parent / "attachments"
+ATTACHMENTS_DIR    = ARCHIVE_DIR / "attachments"
 OUTBOX_DIR         = Path(
     "/home/senior/senior-connect-box/pothead/plugins/filesender/outbox"
     "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
@@ -119,10 +118,35 @@ BUBBLE_WIDTH_FRAC = 0.74   # max fraction of screen width per bubble
 #  Message model
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def load_messages(path: Path) -> list[dict]:
-    """Parse JSONL file, apply edits/deletes, return final message list."""
-    if not path.exists():
+def discover_archive_files(archive_dir: Path) -> list[Path]:
+    """Return archive JSONL files sorted newest-first.
+
+    Naming convention:
+      TSSTART-TSEND.jsonl  — sealed file
+      TSSTART-.jsonl       — current open file (no end timestamp yet)
+    """
+    if not archive_dir.exists():
         return []
+    files = []
+    for p in archive_dir.glob('*.jsonl'):
+        parts = p.stem.split('-', 1)
+        if len(parts) == 2:
+            try:
+                files.append((int(parts[0]), p))
+            except ValueError:
+                pass
+    files.sort(reverse=True)
+    return [p for _, p in files]
+
+
+def load_archive_file(path: Path, pending_edits: dict, pending_deletes: set) -> list[dict]:
+    """Parse one archive file; edits/deletes accumulate in the shared dicts.
+
+    Files are loaded newest-first, so edit/delete records are always encountered
+    before the original messages they target (which are in older files).
+    Pass 1 collects edit/delete records from this file.
+    Pass 2 builds the final message list, applying any pending ops.
+    """
     raw: list[dict] = []
     with path.open(encoding='utf-8') as fh:
         for line in fh:
@@ -133,21 +157,29 @@ def load_messages(path: Path) -> list[dict]:
                 except json.JSONDecodeError:
                     pass
 
-    by_ts: dict[int, dict] = {}
-    order: list[int] = []
+    # Pass 1: collect edits/deletes (including cross-file references to older files)
     for msg in raw:
         mtype = msg.get('type', 'chat')
-        ts    = msg.get('timestamp')
         tgt   = msg.get('target_sent_timestamp')
-        if mtype == 'chat':
-            by_ts[ts] = msg
-            order.append(ts)
-        elif mtype == 'edit' and tgt in by_ts:
-            by_ts[tgt] = {**by_ts[tgt], 'text': msg.get('text'), 'edited': True}
-        elif mtype == 'delete' and tgt in by_ts:
-            del by_ts[tgt]
+        if mtype == 'edit':
+            pending_edits[tgt] = msg.get('text')
+        elif mtype == 'delete':
+            pending_deletes.add(tgt)
 
-    return [by_ts[ts] for ts in order if ts in by_ts]
+    # Pass 2: build chat messages, applying pending ops
+    result: list[dict] = []
+    for msg in raw:
+        if msg.get('type', 'chat') != 'chat':
+            continue
+        ts = msg.get('timestamp')
+        if ts in pending_deletes:
+            pending_deletes.discard(ts)
+            continue
+        if ts in pending_edits:
+            msg = {**msg, 'text': pending_edits.pop(ts), 'edited': True}
+        result.append(msg)
+
+    return result
 
 
 def image_attachments(msg: dict) -> list[dict]:
@@ -406,7 +438,13 @@ class SlideshowOverlay(FloatLayout):
                 self._switch_gallery(next_gi)
                 self._go(0)
             else:
-                self._show_end()
+                app = App.get_running_app()
+                app._load_older()   # updates self._galleries synchronously via overlay reference
+                if self._gallery_idx + 1 < len(self._galleries):
+                    self._switch_gallery(self._gallery_idx + 1)
+                    self._go(0)
+                else:
+                    self._show_end()
         elif idx < 0:
             prev_gi = self._gallery_idx - 1
             if prev_gi >= 0:
@@ -550,6 +588,8 @@ class ChatScreen(BoxLayout):
         scroll.add_widget(self._list)
         self.add_widget(scroll)
         self._scroll = scroll
+        self._on_scroll_top = None   # installed by app after build
+        self._scroll.bind(scroll_y=self._on_scroll_y_change)
 
         # ── input bar ───────────────────────────────────────────────────────
         bar = BoxLayout(
@@ -602,6 +642,33 @@ class ChatScreen(BoxLayout):
         )
         self.add_widget(legend)
 
+    def _on_scroll_y_change(self, _instance, value):
+        if value >= 1.0 and self._on_scroll_top is not None:
+            self._on_scroll_top()
+
+    def prepend_messages(self, msgs):
+        if not msgs:
+            return
+        sv, grid = self._scroll, self._list
+        old_height = grid.height
+        # Add in reverse so oldest ends up visually on top
+        for msg in reversed(msgs):
+            grid.add_widget(MessageBubble(msg), index=len(grid.children))
+
+        def _restore(dt):
+            new_height = grid.height
+            delta = new_height - old_height
+            sv_h = sv.height
+            scrollable = new_height - sv_h
+            if scrollable > 0:
+                old_scrollable = old_height - sv_h
+                if old_scrollable > 0:
+                    old_offset = old_scrollable * sv.scroll_y
+                    sv.scroll_y = min(1.0, (old_offset + delta) / scrollable)
+                else:
+                    sv.scroll_y = 1.0
+        Clock.schedule_once(_restore, 0.1)
+
     def add_message(self, msg: dict) -> 'MessageBubble':
         bubble = MessageBubble(msg)
         self._list.add_widget(bubble)
@@ -636,13 +703,34 @@ class ChatKioskApp(App):
         self._quick_overlay = None
         self._root.add_widget(self._chat)
 
-        msgs = load_messages(MESSAGES_FILE)
-        for m in msgs:
+        self._pending_edits    = {}
+        self._pending_deletes  = set()
+        self._loaded_msgs: list[dict] = []
+        self._loaded_ts_starts: set[int] = set()
+        self._loading_older    = True   # stays True until _fill_screen completes
+
+        all_files = discover_archive_files(ARCHIVE_DIR)
+        if all_files:
+            first = all_files[0]
+            self._loaded_msgs = load_archive_file(
+                first, self._pending_edits, self._pending_deletes)
+            ts = int(first.stem.split('-')[0])
+            self._loaded_ts_starts.add(ts)
+            self._current_ts          = ts
+            self._current_file_loaded = len(self._loaded_msgs)
+            self._current_file_size   = first.stat().st_size
+        else:
+            self._current_ts          = 0
+            self._current_file_loaded = 0
+            self._current_file_size   = 0
+
+        for m in self._loaded_msgs:
             self._chat.add_message(m)
-        self._loaded    = len(msgs)
-        self._file_size = MESSAGES_FILE.stat().st_size if MESSAGES_FILE.exists() else 0
-        self._galleries = self._collect_galleries(msgs)
+
+        self._galleries = self._collect_galleries(self._loaded_msgs)
         self._chat.scroll_bottom()
+        self._chat._on_scroll_top = self._load_older
+        Clock.schedule_once(self._fill_screen, 0)
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
         Window.bind(on_key_down=self._on_key_down)
@@ -679,26 +767,113 @@ class ChatKioskApp(App):
                 bubble = self._pending.pop(outfile)
                 self._chat._list.remove_widget(bubble)
 
-        if not MESSAGES_FILE.exists():
+        all_files = discover_archive_files(ARCHIVE_DIR)
+        if not all_files:
             return
-        size = MESSAGES_FILE.stat().st_size
-        if size <= self._file_size:
+        current_file = next((p for p in all_files if p.stem.endswith('-')), None)
+        if current_file is None:
             return
-        self._file_size = size
+        current_ts = int(current_file.stem.split('-')[0])
 
-        msgs = load_messages(MESSAGES_FILE)
-        new  = msgs[self._loaded:]
-        for m in new:
+        if current_ts != self._current_ts:
+            # Rollover: archiver sealed old file and opened a new one
+            new_msgs = load_archive_file(
+                current_file, self._pending_edits, self._pending_deletes)
+            self._loaded_ts_starts.add(current_ts)
+            self._current_ts          = current_ts
+            self._current_file_loaded = len(new_msgs)
+            self._current_file_size   = current_file.stat().st_size
+        else:
+            size = current_file.stat().st_size
+            if size <= self._current_file_size:
+                return
+            self._current_file_size = size
+            fresh    = load_archive_file(current_file, {}, set())
+            new_msgs = fresh[self._current_file_loaded:]
+            self._current_file_loaded = len(fresh)
+
+        for m in new_msgs:
+            self._loaded_msgs.append(m)
             self._chat.add_message(m)
             imgs = image_attachments(m)
-            # auto-open slideshow for incoming messages that have images
             if imgs and not m.get('is_synced', False):
                 self.open_slideshow(
                     [str(attachment_path(m['timestamp'], a)) for a in imgs])
-        self._loaded += len(new)
-        if new:
-            self._galleries = self._collect_galleries(msgs)
+
+        if new_msgs:
+            self._galleries = self._collect_galleries(self._loaded_msgs)
+            if self._overlay:
+                self._overlay._galleries = self._galleries
             self._chat.scroll_bottom()
+
+    def _fill_screen(self, _dt):
+        """Load older files until the message list fills the viewport."""
+        sv   = self._chat._scroll
+        grid = self._chat._list
+        # sv.height may still be the Kivy default (100) before the first layout
+        # pass; fall back to Window-based estimate in that case.
+        viewport_h = max(sv.height, Window.height - dp(86) - dp(30))
+        if grid.height >= viewport_h:
+            self._loading_older = False
+            sv.scroll_y = 0
+            return
+
+        # Find next older file
+        min_ts = min(self._loaded_ts_starts) if self._loaded_ts_starts else None
+        if min_ts is not None:
+            all_files = discover_archive_files(ARCHIVE_DIR)
+            next_file = next(
+                (p for p in all_files
+                 if int(p.stem.split('-')[0]) not in self._loaded_ts_starts
+                 and int(p.stem.split('-')[0]) < min_ts),
+                None,
+            )
+            if next_file is not None:
+                older_msgs = load_archive_file(
+                    next_file, self._pending_edits, self._pending_deletes)
+                self._loaded_ts_starts.add(int(next_file.stem.split('-')[0]))
+                if older_msgs:
+                    self._loaded_msgs = older_msgs + self._loaded_msgs
+                    self._galleries = self._collect_galleries(self._loaded_msgs)
+                    for msg in reversed(older_msgs):
+                        grid.add_widget(MessageBubble(msg), index=len(grid.children))
+                Clock.schedule_once(self._fill_screen, 0.15)
+                return
+
+        # No more files
+        self._loading_older = False
+        sv.scroll_y = 0
+
+    def _load_older(self):
+        if self._loading_older:
+            return
+
+        # Find the next older archive file not yet loaded
+        min_ts = min(self._loaded_ts_starts) if self._loaded_ts_starts else None
+        if min_ts is None:
+            return
+        all_files = discover_archive_files(ARCHIVE_DIR)
+        next_file = next(
+            (p for p in all_files
+             if int(p.stem.split('-')[0]) not in self._loaded_ts_starts
+             and int(p.stem.split('-')[0]) < min_ts),
+            None,
+        )
+        if next_file is None:
+            return
+
+        self._loading_older = True
+        older_msgs = load_archive_file(next_file, self._pending_edits, self._pending_deletes)
+        self._loaded_ts_starts.add(int(next_file.stem.split('-')[0]))
+
+        if older_msgs:
+            self._loaded_msgs = older_msgs + self._loaded_msgs
+            # Rebuild galleries synchronously so slideshow can check immediately
+            self._galleries = self._collect_galleries(self._loaded_msgs)
+            if self._overlay:
+                self._overlay._galleries = self._galleries
+            self._chat.prepend_messages(older_msgs)
+        Clock.schedule_once(lambda _: setattr(self, '_loading_older', False), 0.25)
 
     def on_stop(self):
         Window.unbind(on_key_down=self._on_key_down)
