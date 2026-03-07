@@ -50,6 +50,7 @@ else:
             print(f'[WARN] invalid --size value "{_args.size}", expected WxH e.g. 1024x600',
                   file=sys.stderr)
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
+Config.set('kivy', 'keyboard_mode', 'dock')
 
 from kivy.core.text import LabelBase
 _DEJAVU = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
@@ -75,6 +76,7 @@ from kivy.clock import Clock
 from kivy.core.window import Window
 from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.metrics import dp, sp
+from kivy.uix.vkeyboard import VKeyboard
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -752,12 +754,14 @@ class ChatKioskApp(App):
         self._galleries = self._collect_galleries(self._loaded_msgs)
         self._chat.scroll_bottom()
         self._chat._on_scroll_top = self._load_older
+        self._chat._input.bind(focus=self._on_input_focus)
         Clock.schedule_once(self._fill_screen, 0)
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
         Window.bind(on_key_down=self._on_key_down)
         Window.bind(on_joy_hat=self._on_joy_hat)
         Window.bind(on_joy_button_down=self._on_joy_button_down)
+
         return self._root
 
     # ── outbox / send ────────────────────────────────────────────────────────
@@ -900,6 +904,26 @@ class ChatKioskApp(App):
             self._chat.prepend_messages(older_msgs, done_cb=_done)
         else:
             Clock.schedule_once(lambda _: _done(), 0.1)
+
+    def _on_input_focus(self, _inst, focused):
+        if focused:
+            Clock.schedule_once(self._find_and_bind_vkb, 0.3)
+        else:
+            self._resize_for_keyboard(0)
+
+    def _find_and_bind_vkb(self, _dt):
+        vkb = next((c for c in Window.children if isinstance(c, VKeyboard)), None)
+        if vkb:
+            self._resize_for_keyboard(vkb.height)
+            vkb.bind(height=lambda _w, h: self._resize_for_keyboard(h))
+        else:
+            # Keyboard still animating in — retry
+            Clock.schedule_once(self._find_and_bind_vkb, 0.2)
+
+    def _resize_for_keyboard(self, kh):
+        self._chat.size_hint_y = None
+        self._chat.height = Window.height - kh
+        self._chat.y = kh
 
     def on_stop(self):
         Window.unbind(on_key_down=self._on_key_down)
