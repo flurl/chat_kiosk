@@ -646,8 +646,10 @@ class ChatScreen(BoxLayout):
         if value >= 1.0 and self._on_scroll_top is not None:
             self._on_scroll_top()
 
-    def prepend_messages(self, msgs):
+    def prepend_messages(self, msgs, done_cb=None):
         if not msgs:
+            if done_cb:
+                done_cb()
             return
         sv, grid = self._scroll, self._list
         old_height = grid.height
@@ -655,18 +657,38 @@ class ChatScreen(BoxLayout):
         for msg in reversed(msgs):
             grid.add_widget(MessageBubble(msg), index=len(grid.children))
 
+        attempts = [6]
+
         def _restore(dt):
             new_height = grid.height
             delta = new_height - old_height
+            if delta <= 0:
+                # Layout hasn't settled yet — retry
+                attempts[0] -= 1
+                if attempts[0] > 0:
+                    Clock.schedule_once(_restore, 0.15)
+                elif done_cb:
+                    done_cb()
+                return
             sv_h = sv.height
-            scrollable = new_height - sv_h
-            if scrollable > 0:
+            new_scrollable = new_height - sv_h
+            if new_scrollable <= 0:
+                new_scroll_y = 1.0
+            else:
                 old_scrollable = old_height - sv_h
                 if old_scrollable > 0:
-                    old_offset = old_scrollable * sv.scroll_y
-                    sv.scroll_y = min(1.0, (old_offset + delta) / scrollable)
+                    # Old messages didn't move — keep same pixel offset from bottom.
+                    new_scroll_y = sv.scroll_y * old_scrollable / new_scrollable
                 else:
-                    sv.scroll_y = 1.0
+                    new_scroll_y = 1.0
+            sv.scroll_y = new_scroll_y
+            # Stop DampedScrollEffect from animating scroll_y back to 1.0
+            if sv.effect_y:
+                sh = max(0, grid.height - sv.height)
+                sv.effect_y.value = -new_scroll_y * sh
+                sv.effect_y.velocity = 0
+            if done_cb:
+                done_cb()
         Clock.schedule_once(_restore, 0.1)
 
     def add_message(self, msg: dict) -> 'MessageBubble':
@@ -866,14 +888,18 @@ class ChatKioskApp(App):
         older_msgs = load_archive_file(next_file, self._pending_edits, self._pending_deletes)
         self._loaded_ts_starts.add(int(next_file.stem.split('-')[0]))
 
+        def _done():
+            self._loading_older = False
+
         if older_msgs:
             self._loaded_msgs = older_msgs + self._loaded_msgs
             # Rebuild galleries synchronously so slideshow can check immediately
             self._galleries = self._collect_galleries(self._loaded_msgs)
             if self._overlay:
                 self._overlay._galleries = self._galleries
-            self._chat.prepend_messages(older_msgs)
-        Clock.schedule_once(lambda _: setattr(self, '_loading_older', False), 0.25)
+            self._chat.prepend_messages(older_msgs, done_cb=_done)
+        else:
+            Clock.schedule_once(lambda _: _done(), 0.1)
 
     def on_stop(self):
         Window.unbind(on_key_down=self._on_key_down)
