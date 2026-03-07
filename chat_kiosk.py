@@ -914,6 +914,9 @@ class ChatKioskApp(App):
     def _find_and_bind_vkb(self, _dt):
         vkb = next((c for c in Window.children if isinstance(c, VKeyboard)), None)
         if vkb:
+            layout_path = str(Path(__file__).parent / 'kiosk_keyboard.json')
+            if vkb.layout != layout_path:
+                vkb.layout = layout_path
             self._resize_for_keyboard(vkb.height)
             vkb.bind(height=lambda _w, h: self._resize_for_keyboard(h))
         else:
