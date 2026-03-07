@@ -50,7 +50,7 @@ else:
             print(f'[WARN] invalid --size value "{_args.size}", expected WxH e.g. 1024x600',
                   file=sys.stderr)
 Config.set('input', 'mouse', 'mouse,multitouch_on_demand')
-Config.set('kivy', 'keyboard_mode', 'dock')
+Config.set('kivy', 'keyboard_mode', 'systemanddock')
 
 from kivy.core.text import LabelBase
 _DEJAVU = Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
