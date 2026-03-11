@@ -98,9 +98,10 @@ OUTBOX_DIR         = Path(
     "/home/senior/senior-connect-box/pothead/plugins/filesender/outbox"
     "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
 )
-POLL_INTERVAL      = 1.0   # seconds between file-change checks
-SLIDESHOW_INTERVAL = 4.0   # seconds per slide during auto-advance
-QUICK_MESSAGES     = ['Yes', 'No', 'Perhaps']
+POLL_INTERVAL           = 1.0   # seconds between file-change checks
+SLIDESHOW_INTERVAL      = 4.0   # seconds per slide during auto-advance
+VIDEO_AUTOPLAY_DELAY    = 3     # seconds countdown before a video slide auto-plays
+QUICK_MESSAGES          = ['Yes', 'No', 'Perhaps']
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,11 +359,14 @@ class MessageBubble(BoxLayout):
         self.add_widget(anchor)
 
         # ── tap to open slideshow ───────────────────────────────────────────
-        self._img_paths = [str(attachment_path(ts, a)) for a in images]
+        self._media_paths = (
+            [(str(attachment_path(ts, a)), 'image') for a in images] +
+            [(str(attachment_path(ts, a)), 'video') for a in videos]
+        )
 
     def on_touch_down(self, touch):
-        if self.collide_point(*touch.pos) and self._img_paths:
-            App.get_running_app().open_slideshow(self._img_paths)
+        if self.collide_point(*touch.pos) and self._media_paths:
+            App.get_running_app().open_slideshow(self._media_paths)
             return True
         return super().on_touch_down(touch)
 
@@ -379,9 +383,10 @@ class SlideshowOverlay(FloatLayout):
         self._galleries   = galleries
         self._gallery_idx = gallery_idx
         self._paths       = galleries[gallery_idx] if galleries else []
-        self._idx         = 0
-        self._at_end      = False
-        self._timer       = None
+        self._idx             = 0
+        self._at_end          = False
+        self._timer           = None
+        self._countdown_event = None
 
         # dim background
         with self.canvas.before:
@@ -400,6 +405,18 @@ class SlideshowOverlay(FloatLayout):
             keep_ratio=True,
         )
         self.add_widget(self._img)
+
+        # video countdown label — created once, added/removed per video slide
+        self._vid_label = Label(
+            text='',
+            markup=True,
+            size_hint=(0.88, 0.82),
+            pos_hint={'center_x': 0.5, 'center_y': 0.52},
+            halign='center',
+            valign='middle',
+            color=C_TEXT,
+        )
+        self._vid_label.bind(size=lambda w, v: setattr(w, 'text_size', v))
 
         # slide counter  "2 / 4"
         self._ctr = Label(
@@ -454,10 +471,12 @@ class SlideshowOverlay(FloatLayout):
 
     def _show_end(self):
         """Show an end-of-galleries message and set the sentinel index."""
-        self._at_end      = True
-        self._idx         = len(self._paths)   # one past end — used by left-press calc
-        self._img.source  = ''
-        self._ctr.text    = 'No more images'
+        self._at_end          = True
+        self._idx             = len(self._paths)   # one past end — used by left-press calc
+        self._img.opacity = 0
+        if self._vid_label.parent:
+            self.remove_widget(self._vid_label)
+        self._ctr.text = 'No more images'
 
     def _manual_go(self, idx: int):
         """Navigate manually and stop the auto-advance timer."""
@@ -494,13 +513,54 @@ class SlideshowOverlay(FloatLayout):
         else:
             self._go(idx)
 
+    def _cancel_countdown(self):
+        if self._countdown_event:
+            self._countdown_event.cancel()
+            self._countdown_event = None
+
+    def _start_countdown(self, path: str, n: int):
+        self._ctr.text = f'{self._idx + 1} / {len(self._paths)}'
+
+        def _fmt(secs):
+            return (
+                f'[size={int(sp(26))}]Video in[/size]\n'
+                f'[size={int(sp(110))}]{secs}[/size]'
+            )
+
+        self._vid_label.text = _fmt(n)
+        if self._vid_label.parent is None:
+            self.add_widget(self._vid_label)
+        remaining = [n]
+
+        def _tick(_dt):
+            remaining[0] -= 1
+            if remaining[0] <= 0:
+                self._cancel_countdown()
+                if self._vid_label.parent:
+                    self.remove_widget(self._vid_label)
+                App.get_running_app().open_video([path])
+            else:
+                self._vid_label.text = _fmt(remaining[0])
+
+        self._countdown_event = Clock.schedule_interval(_tick, 1.0)
+
     def _go(self, idx: int):
+        self._cancel_countdown()
         self._idx = idx % len(self._paths)
-        p = self._paths[self._idx]
-        self._img.source = p if os.path.exists(p) else ''
-        self._ctr.text   = f'{self._idx + 1} / {len(self._paths)}'
+        entry = self._paths[self._idx]
+        path, kind = entry if isinstance(entry, tuple) else (entry, 'image')
+        if kind == 'video':
+            self._img.opacity = 0
+            self._start_countdown(path, VIDEO_AUTOPLAY_DELAY)
+        else:
+            if self._vid_label.parent:
+                self.remove_widget(self._vid_label)
+            self._img.opacity = 1
+            self._img.source  = path if os.path.exists(path) else ''
+            self._ctr.text    = f'{self._idx + 1} / {len(self._paths)}'
 
     def stop(self):
+        self._cancel_countdown()
         if self._timer:
             self._timer.cancel()
             self._timer = None
@@ -866,7 +926,7 @@ class ChatKioskApp(App):
             imgs = image_attachments(m)
             if imgs and not m.get('is_synced', False):
                 self.open_slideshow(
-                    [str(attachment_path(m['timestamp'], a)) for a in imgs])
+                    [(str(attachment_path(m['timestamp'], a)), 'image') for a in imgs])
             vids = video_attachments(m)
             if vids and not m.get('is_synced', False):
                 self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
@@ -1071,6 +1131,9 @@ class ChatKioskApp(App):
             if self._video_poll:
                 self._video_poll.cancel()
                 self._video_poll = None
+            # Natural exit — advance to next slide if slideshow is open
+            if self._overlay:
+                self._overlay._manual_go(self._overlay._idx + 1)
 
     def close_video(self):
         if self._video_poll:
@@ -1101,12 +1164,17 @@ class ChatKioskApp(App):
 
     # ── gallery helpers ───────────────────────────────────────────────────────
     @staticmethod
-    def _collect_galleries(msgs: list[dict]) -> list[list[str]]:
+    def _collect_galleries(msgs: list[dict]) -> list[list[tuple]]:
         result = []
         for m in msgs:
             imgs = image_attachments(m)
-            if imgs:
-                result.append([str(attachment_path(m['timestamp'], a)) for a in imgs])
+            vids = video_attachments(m)
+            items = (
+                [(str(attachment_path(m['timestamp'], a)), 'image') for a in imgs] +
+                [(str(attachment_path(m['timestamp'], a)), 'video') for a in vids]
+            )
+            if items:
+                result.append(items)
         return list(reversed(result))
 
     # ── slideshow control ────────────────────────────────────────────────────
