@@ -9,6 +9,8 @@ and shows image attachments in a tap-activated fullscreen slideshow.
 import os
 import sys
 import json
+import socket
+import subprocess
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -79,6 +81,8 @@ from kivy.core.window import Window
 from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.metrics import dp, sp
 from kivy.uix.vkeyboard import VKeyboard
+
+MPV_IPC_SOCKET = '/tmp/chat_kiosk_mpv.sock'
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -191,12 +195,22 @@ def image_attachments(msg: dict) -> list[dict]:
             if a.get('content_type', '').startswith('image/')]
 
 
+def video_attachments(msg: dict) -> list[dict]:
+    return [a for a in (msg.get('attachments') or [])
+            if a.get('content_type', '').startswith('video/')]
+
+
 def attachment_path(ts: int, att: dict) -> Path:
     """Resolve local file path for an attachment.
     Archive naming convention: {timestamp}_{id}_{id}
+    If the archiver created a symlink with a guessed extension, prefer that
+    so media players can identify the format by filename.
     """
-    aid = att['id']
-    return ATTACHMENTS_DIR / f"{ts}_{aid}_{aid}"
+    aid  = att['id']
+    base = f"{ts}_{aid}_{aid}"
+    for p in ATTACHMENTS_DIR.glob(f"{base}.*"):
+        return p
+    return ATTACHMENTS_DIR / base
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -219,6 +233,7 @@ class MessageBubble(BoxLayout):
         source = msg.get('source_name') or msg.get('source', '')
         edited = msg.get('edited', False)
         images = image_attachments(msg)
+        videos = video_attachments(msg)
 
         try:
             time_str = datetime.fromtimestamp(ts / 1000).strftime('%H:%M')
@@ -291,6 +306,27 @@ class MessageBubble(BoxLayout):
                     valign='middle',
                 ))
             inner.add_widget(row)
+
+        if videos:
+            all_vid_paths = [str(attachment_path(ts, a)) for a in videos]
+            vid_row = BoxLayout(
+                orientation='horizontal',
+                size_hint=(1, None),
+                height=dp(60),
+                spacing=dp(6),
+            )
+            for i, att in enumerate(videos):
+                idx = i
+                btn = Button(
+                    text=f'▶  video {i + 1}' if len(videos) > 1 else '▶  play video',
+                    font_size=sp(20),
+                    size_hint=(1, 1),
+                    background_color=(0.10, 0.10, 0.18, 1),
+                    background_normal='',
+                )
+                btn.bind(on_release=lambda _, i=idx: App.get_running_app().open_video(all_vid_paths, i))
+                vid_row.add_widget(btn)
+            inner.add_widget(vid_row)
 
         if msg.get('pending'):
             inner.add_widget(_lbl('Sending...', size=17, color=C_IMG_LINK, halign='right'))
@@ -468,6 +504,8 @@ class SlideshowOverlay(FloatLayout):
         if self._timer:
             self._timer.cancel()
             self._timer = None
+
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -725,6 +763,8 @@ class ChatKioskApp(App):
         self._root          = FloatLayout()
         self._chat          = ChatScreen(size_hint=(1, 1))
         self._overlay       = None
+        self._video_proc    = None   # running mpv subprocess
+        self._video_poll    = None   # Clock handle for exit detection
         self._pending       = {}    # outbox Path → pending MessageBubble
         self._quick_overlay = None
         self._root.add_widget(self._chat)
@@ -827,6 +867,9 @@ class ChatKioskApp(App):
             if imgs and not m.get('is_synced', False):
                 self.open_slideshow(
                     [str(attachment_path(m['timestamp'], a)) for a in imgs])
+            vids = video_attachments(m)
+            if vids and not m.get('is_synced', False):
+                self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
 
         if new_msgs:
             self._galleries = self._collect_galleries(self._loaded_msgs)
@@ -931,6 +974,7 @@ class ChatKioskApp(App):
         self._chat.y = kh
 
     def on_stop(self):
+        self.close_video()   # terminate mpv if running
         Window.unbind(on_key_down=self._on_key_down)
         Window.unbind(on_joy_hat=self._on_joy_hat)
         Window.unbind(on_joy_button_down=self._on_joy_button_down)
@@ -963,6 +1007,14 @@ class ChatKioskApp(App):
             if key in (13, 27):                         # enter or escape
                 self.close_slideshow()
                 return True
+        if self._video_proc is not None:
+            if key == 13:                              # enter — play/pause
+                self._mpv_command('cycle', 'pause')
+                return True
+            if key in (27, 276):                       # escape or left — close
+                self.close_video()
+                return True
+            return True                                # swallow all other keys
         if self._quick_overlay is not None:
             if key == 273:                              # up
                 self._quick_overlay.move(-1)
@@ -985,6 +1037,48 @@ class ChatKioskApp(App):
             self.open_slideshow(self._galleries[0])
             return True
         return False
+
+    # ── video (mpv subprocess) ────────────────────────────────────────────────
+    def open_video(self, paths: list[str], idx: int = 0):
+        self.close_video()
+        path = paths[idx]
+        if not os.path.exists(path):
+            return
+        try:
+            self._video_proc = subprocess.Popen([
+                'mpv', '--fullscreen', '--really-quiet',
+                f'--input-ipc-server={MPV_IPC_SOCKET}',
+                path,
+            ])
+        except FileNotFoundError:
+            print('[ERROR] mpv not found — install it with: sudo apt install mpv',
+                  file=sys.stderr)
+            return
+        self._video_poll = Clock.schedule_interval(self._check_video_proc, 0.5)
+
+    def _mpv_command(self, *args):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                s.connect(MPV_IPC_SOCKET)
+                s.sendall(json.dumps({'command': list(args)}).encode() + b'\n')
+        except Exception:
+            pass
+
+    def _check_video_proc(self, _dt):
+        if self._video_proc and self._video_proc.poll() is not None:
+            self._video_proc = None
+            if self._video_poll:
+                self._video_poll.cancel()
+                self._video_poll = None
+
+    def close_video(self):
+        if self._video_poll:
+            self._video_poll.cancel()
+            self._video_poll = None
+        if self._video_proc:
+            self._mpv_command('quit')
+            self._video_proc = None
 
     # ── quick-message overlay ─────────────────────────────────────────────────
     def open_quick_messages(self):
