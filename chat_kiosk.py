@@ -806,12 +806,12 @@ class ChatScreen(BoxLayout):
 
         # ── legend ──────────────────────────────────────────────────────────
         legend = Label(
-            text='[color=ffdd00]●[/color] [→] Gallery     [color=ffffff]●[/color] [Ent] Quick messages     ↺ [↑] Scroll up     ↻ [↓] Scroll down',
+            text='[color=ffdd00]●[/color] [→] Gallery     [color=ffffff]●[/color] [Ent] Quick messages\n↺ [↑] Scroll up     ↻ [↓] Scroll down',
             markup=True,
             font_size=sp(18),
             color=C_SUBTEXT,
             size_hint=(1, None),
-            height=dp(30),
+            height=dp(56),
             halign='center',
             valign='middle',
         )
