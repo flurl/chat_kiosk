@@ -1001,6 +1001,7 @@ class ChatKioskApp(App):
         for m in new_msgs:
             self._loaded_msgs.append(m)
             self._chat.add_message(m)
+            self._galleries = self._collect_galleries(self._loaded_msgs)
             imgs = image_attachments(m)
             if imgs and not m.get('is_synced', False):
                 self.open_slideshow(
@@ -1015,7 +1016,6 @@ class ChatKioskApp(App):
                 self.open_notification(m)
 
         if new_msgs:
-            self._galleries = self._collect_galleries(self._loaded_msgs)
             if self._overlay:
                 self._overlay._galleries = self._galleries
             self._chat.scroll_bottom()
