@@ -511,7 +511,8 @@ class SlideshowOverlay(FloatLayout):
             if prev_gi >= 0:
                 self._switch_gallery(prev_gi)
                 self._go(len(self._paths) - 1)
-            # else: already at first gallery, do nothing
+            else:
+                App.get_running_app().close_slideshow()
         else:
             self._go(idx)
 
