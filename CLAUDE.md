@@ -71,8 +71,8 @@ Current shortcut legend by mode:
 | ⚪ | Enter | Open quick-message overlay (only when text input is not focused) |
 | 🔵 | ← | (no-op) |
 | 🟡 | → | Open gallery (newest message with images) |
-| ↺ | ↑ | (no-op) |
-| ↻ | ↓ | (no-op) |
+| ↺ | ↑ | Scroll message list up (toward older messages) |
+| ↻ | ↓ | Scroll message list down (toward newer messages) |
 
 **Slideshow overlay**
 | Input | Key | Action |

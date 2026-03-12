@@ -9,6 +9,7 @@ and shows image attachments in a tap-activated fullscreen slideshow.
 import os
 import sys
 import json
+import time
 import socket
 import subprocess
 import argparse
@@ -102,6 +103,7 @@ POLL_INTERVAL           = 1.0   # seconds between file-change checks
 SLIDESHOW_INTERVAL      = 4.0   # seconds per slide during auto-advance
 VIDEO_AUTOPLAY_DELAY    = 3     # seconds countdown before a video slide auto-plays
 QUICK_MESSAGES          = ['Yes', 'No', 'Perhaps']
+IDLE_NOTIFICATION_DELAY = 1     # minutes of inactivity before showing new-message notification
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -658,6 +660,77 @@ class QuickMessageOverlay(FloatLayout):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  New-message notification overlay
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class NewMessageOverlay(FloatLayout):
+    """Full-screen notification shown when a new message arrives during inactivity."""
+
+    def __init__(self, msg: dict, on_close, **kwargs):
+        super().__init__(**kwargs)
+        self._on_close = on_close
+
+        with self.canvas.before:
+            Color(*C_OVERLAY_BG)
+            _bg = Rectangle()
+        self.bind(
+            pos =lambda w, v: setattr(_bg, 'pos',  v),
+            size=lambda w, v: setattr(_bg, 'size', v),
+        )
+
+        sender  = msg.get('source_name') or msg.get('source', '') or 'Someone'
+        text    = msg.get('text') or ''
+
+        box = BoxLayout(
+            orientation='vertical',
+            size_hint=(0.70, None),
+            pos_hint={'center_x': 0.5, 'center_y': 0.5},
+            spacing=dp(20),
+            padding=(dp(30), dp(30)),
+        )
+        box.bind(minimum_height=box.setter('height'))
+
+        def _lbl(txt, size=24, color=C_TEXT, markup=False):
+            w = Label(
+                text=txt,
+                markup=markup,
+                font_size=sp(size),
+                color=color,
+                size_hint=(1, None),
+                halign='center',
+                valign='top',
+                text_size=(Window.width * 0.60, None),
+            )
+            w.bind(texture_size=lambda inst, val: setattr(inst, 'height', val[1]))
+            return w
+
+        box.add_widget(_lbl('New message', size=38))
+        if sender:
+            box.add_widget(_lbl(f'From: {sender}', size=26, color=C_SUBTEXT))
+        if text:
+            preview = text[:160] + ('…' if len(text) > 160 else '')
+            box.add_widget(_lbl(preview, size=24))
+        box.add_widget(_lbl(
+            '[color=ffffff]●[/color] [Ent] Dismiss',
+            size=20, color=C_SUBTEXT, markup=True,
+        ))
+
+        with box.canvas.before:
+            Color(*C_RECV)
+            box_bg = RoundedRectangle(radius=[dp(18)])
+        box.bind(
+            pos =lambda w, v: setattr(box_bg, 'pos',  v),
+            size=lambda w, v: setattr(box_bg, 'size', v),
+        )
+
+        self.add_widget(box)
+
+    def on_touch_down(self, touch):
+        self._on_close()
+        return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Main chat screen
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -733,7 +806,7 @@ class ChatScreen(BoxLayout):
 
         # ── legend ──────────────────────────────────────────────────────────
         legend = Label(
-            text='[color=ffdd00]●[/color] [→] Open gallery     [color=ffffff]●[/color] [Ent] Quick messages',
+            text='[color=ffdd00]●[/color] [→] Gallery     [color=ffffff]●[/color] [Ent] Quick messages     ↺ [↑] Scroll up     ↻ [↓] Scroll down',
             markup=True,
             font_size=sp(18),
             color=C_SUBTEXT,
@@ -825,8 +898,10 @@ class ChatKioskApp(App):
         self._overlay       = None
         self._video_proc    = None   # running mpv subprocess
         self._video_poll    = None   # Clock handle for exit detection
-        self._pending       = {}    # outbox Path → pending MessageBubble
-        self._quick_overlay = None
+        self._pending            = {}    # outbox Path → pending MessageBubble
+        self._quick_overlay      = None
+        self._notification       = None
+        self._last_interaction   = time.time()
         self._root.add_widget(self._chat)
 
         self._pending_edits    = {}
@@ -861,6 +936,7 @@ class ChatKioskApp(App):
 
         Clock.schedule_interval(self._poll, POLL_INTERVAL)
         Window.bind(on_key_down=self._on_key_down)
+        Window.bind(on_touch_down=self._on_window_touch)
         Window.bind(on_joy_hat=self._on_joy_hat)
         Window.bind(on_joy_button_down=self._on_joy_button_down)
 
@@ -920,6 +996,8 @@ class ChatKioskApp(App):
             new_msgs = fresh[self._current_file_loaded:]
             self._current_file_loaded = len(fresh)
 
+        idle_secs = time.time() - self._last_interaction
+        idle      = idle_secs >= IDLE_NOTIFICATION_DELAY * 60
         for m in new_msgs:
             self._loaded_msgs.append(m)
             self._chat.add_message(m)
@@ -930,6 +1008,11 @@ class ChatKioskApp(App):
             vids = video_attachments(m)
             if vids and not m.get('is_synced', False):
                 self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
+            if (idle
+                    and not m.get('is_synced', False)
+                    and self._overlay is None
+                    and self._video_proc is None):
+                self.open_notification(m)
 
         if new_msgs:
             self._galleries = self._collect_galleries(self._loaded_msgs)
@@ -1036,8 +1119,12 @@ class ChatKioskApp(App):
     def on_stop(self):
         self.close_video()   # terminate mpv if running
         Window.unbind(on_key_down=self._on_key_down)
+        Window.unbind(on_touch_down=self._on_window_touch)
         Window.unbind(on_joy_hat=self._on_joy_hat)
         Window.unbind(on_joy_button_down=self._on_joy_button_down)
+
+    def _on_window_touch(self, _win, _touch):
+        self._last_interaction = time.time()
 
     # ── joystick ─────────────────────────────────────────────────────────────
     def _on_joy_hat(self, _win, _stick, _hat, value):
@@ -1057,6 +1144,11 @@ class ChatKioskApp(App):
 
     # ── keyboard ─────────────────────────────────────────────────────────────
     def _on_key_down(self, _win, key, _sc, _cp, _mod):
+        self._last_interaction = time.time()
+        if self._notification is not None:
+            if key in (13, 27, 276):                        # enter, escape, left
+                self.close_notification()
+                return True
         if self._overlay is not None:
             if key == 276:                              # left arrow
                 self._overlay._manual_go(self._overlay._idx - 1)
@@ -1090,6 +1182,12 @@ class ChatKioskApp(App):
             if key in (27, 276):                        # escape or left arrow
                 self.close_quick_messages()
                 return True
+        elif key == 273:                                    # up — scroll toward older messages
+            self._scroll_chat(+1)
+            return True
+        elif key == 274:                                    # down — scroll toward newer messages
+            self._scroll_chat(-1)
+            return True
         elif key == 13 and not self._chat._input.focus:   # enter
             self.open_quick_messages()
             return True
@@ -1097,6 +1195,13 @@ class ChatKioskApp(App):
             self.open_slideshow(self._galleries[0])
             return True
         return False
+
+    def _scroll_chat(self, direction: int):
+        sv   = self._chat._scroll
+        grid = self._chat._list
+        scrollable = max(1, grid.height - sv.height)
+        step = dp(150) / scrollable
+        sv.scroll_y = max(0.0, min(1.0, sv.scroll_y + direction * step))
 
     # ── video (mpv subprocess) ────────────────────────────────────────────────
     def open_video(self, paths: list[str], idx: int = 0):
@@ -1161,6 +1266,18 @@ class ChatKioskApp(App):
     def _quick_send(self, text: str):
         self.close_quick_messages()
         self.send_message(text)
+
+    # ── new-message notification ──────────────────────────────────────────────
+    def open_notification(self, msg: dict):
+        self.close_notification()
+        self._notification = NewMessageOverlay(
+            msg, on_close=self.close_notification, size_hint=(1, 1))
+        self._root.add_widget(self._notification)
+
+    def close_notification(self):
+        if self._notification:
+            self._root.remove_widget(self._notification)
+            self._notification = None
 
     # ── gallery helpers ───────────────────────────────────────────────────────
     @staticmethod
