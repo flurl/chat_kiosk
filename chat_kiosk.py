@@ -104,6 +104,9 @@ SLIDESHOW_INTERVAL      = 4.0   # seconds per slide during auto-advance
 VIDEO_AUTOPLAY_DELAY    = 3     # seconds countdown before a video slide auto-plays
 QUICK_MESSAGES          = ['Yes', 'No', 'Perhaps']
 IDLE_NOTIFICATION_DELAY = 1     # minutes of inactivity before showing new-message notification
+LED_PIN_1               = 5     # BCM GPIO 5  (header pin 29) — notification LED 1
+LED_PIN_2               = 6     # BCM GPIO 6  (header pin 31) — notification LED 2
+LED_BLINK_INTERVAL      = 10    # seconds per half-cycle
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -905,6 +908,18 @@ class ChatKioskApp(App):
         self._last_interaction   = time.time()
         self._root.add_widget(self._chat)
 
+        # ── notification LEDs (GPIO 5 + 6, opposite phase) ──────────────────
+        try:
+            from gpiozero import LED as _GpioLED
+            self._led1 = _GpioLED(LED_PIN_1)
+            self._led2 = _GpioLED(LED_PIN_2)
+        except Exception as _e:
+            print(f'[INFO] LED init skipped: {_e}', file=sys.stderr)
+            self._led1 = self._led2 = None
+        self._led_blink_event = None
+        self._led_state       = False   # False → LED1 off, LED2 on; True → LED1 on, LED2 off
+        self._stop_led_blink()
+
         self._pending_edits    = {}
         self._pending_deletes  = set()
         self._loaded_msgs: list[dict] = []
@@ -1268,17 +1283,45 @@ class ChatKioskApp(App):
         self.close_quick_messages()
         self.send_message(text)
 
+    # ── notification LEDs ─────────────────────────────────────────────────────
+    def _start_led_blink(self):
+        if self._led1 is None:
+            return
+        self._led_state = False
+        self._led_blink_event = Clock.schedule_interval(
+            self._led_blink_tick, LED_BLINK_INTERVAL)
+        self._led_blink_tick(0)   # apply initial state immediately
+
+    def _led_blink_tick(self, _dt):
+        self._led_state = not self._led_state
+        if self._led_state:
+            self._led1.off()
+            self._led2.on()
+        else:
+            self._led1.on()
+            self._led2.off()
+
+    def _stop_led_blink(self):
+        if self._led_blink_event:
+            self._led_blink_event.cancel()
+            self._led_blink_event = None
+        if self._led1:
+            self._led1.on()
+            self._led2.on()
+
     # ── new-message notification ──────────────────────────────────────────────
     def open_notification(self, msg: dict):
         self.close_notification()
         self._notification = NewMessageOverlay(
             msg, on_close=self.close_notification, size_hint=(1, 1))
         self._root.add_widget(self._notification)
+        self._start_led_blink()
 
     def close_notification(self):
         if self._notification:
             self._root.remove_widget(self._notification)
             self._notification = None
+        self._stop_led_blink()
 
     # ── gallery helpers ───────────────────────────────────────────────────────
     @staticmethod
