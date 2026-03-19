@@ -87,26 +87,38 @@ MPV_IPC_SOCKET = '/tmp/chat_kiosk_mpv.sock'
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Configuration  — edit these paths for your deployment
+#  Configuration  — defaults; overridden by chat_kiosk.json if present
 # ═══════════════════════════════════════════════════════════════════════════════
 
-ARCHIVE_DIR = Path(
-    "/home/senior/senior-connect-box/pothead/plugins/archiver/archives"
-    "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
-)
-ATTACHMENTS_DIR    = ARCHIVE_DIR / "attachments"
-OUTBOX_DIR         = Path(
-    "/home/senior/senior-connect-box/pothead/plugins/filesender/outbox"
-    "/bc18157c909a82a4dc858d129895a4ab786c884e01ac27fffe273f32122ccd4f"
-)
-POLL_INTERVAL           = 1.0   # seconds between file-change checks
-SLIDESHOW_INTERVAL      = 4.0   # seconds per slide during auto-advance
-VIDEO_AUTOPLAY_DELAY    = 3     # seconds countdown before a video slide auto-plays
-QUICK_MESSAGES          = ['Yes', 'No', 'Perhaps']
-IDLE_NOTIFICATION_DELAY = 1     # minutes of inactivity before showing new-message notification
-LED_PIN_1               = 5     # BCM GPIO 5  (header pin 29) — notification LED 1
-LED_PIN_2               = 6     # BCM GPIO 6  (header pin 31) — notification LED 2
-LED_BLINK_INTERVAL      = 10    # seconds per half-cycle
+_CONFIG_FILE = Path(__file__).parent / 'chat_kiosk.json'
+
+def _load_config() -> dict:
+    if _CONFIG_FILE.exists():
+        try:
+            with _CONFIG_FILE.open(encoding='utf-8') as _f:
+                return json.load(_f)
+        except Exception as _e:
+            print(f'[WARN] could not read {_CONFIG_FILE}: {_e}', file=sys.stderr)
+    return {}
+
+_cfg = _load_config()
+
+for _required in ('archive_dir', 'outbox_dir'):
+    if _required not in _cfg:
+        print(f'[ERROR] "{_required}" must be set in {_CONFIG_FILE}', file=sys.stderr)
+        sys.exit(1)
+
+ARCHIVE_DIR             = Path(_cfg['archive_dir'])
+ATTACHMENTS_DIR         = Path(_cfg['attachments_dir']) if 'attachments_dir' in _cfg else ARCHIVE_DIR / 'attachments'
+OUTBOX_DIR              = Path(_cfg['outbox_dir'])
+POLL_INTERVAL           = _cfg.get('poll_interval',           1.0)   # seconds between file-change checks
+SLIDESHOW_INTERVAL      = _cfg.get('slideshow_interval',      4.0)   # seconds per slide during auto-advance
+VIDEO_AUTOPLAY_DELAY    = _cfg.get('video_autoplay_delay',    3)     # seconds countdown before a video slide auto-plays
+QUICK_MESSAGES          = _cfg.get('quick_messages',          ['Yes', 'No', 'Perhaps'])
+IDLE_NOTIFICATION_DELAY = _cfg.get('idle_notification_delay', 1)     # minutes of inactivity before showing new-message notification
+LED_PIN_1               = _cfg.get('led_pin_1',               5)     # BCM GPIO 5  (header pin 29) — notification LED 1
+LED_PIN_2               = _cfg.get('led_pin_2',               6)     # BCM GPIO 6  (header pin 31) — notification LED 2
+LED_BLINK_INTERVAL      = _cfg.get('led_blink_interval',      10)    # seconds per half-cycle
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

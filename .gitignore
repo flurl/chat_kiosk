@@ -5,3 +5,4 @@ __pycache__/
 .kivy/
 .timetracker
 .vscode
+chat_kiosk.json
