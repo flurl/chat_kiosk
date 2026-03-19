@@ -58,21 +58,23 @@ python3 -m venv .venv
 
 ## Configuration
 
-Edit the constants at the top of `chat_kiosk.py`:
+Copy `chat_kiosk.json.example` to `chat_kiosk.json` and edit it. `chat_kiosk.json` is gitignored so deployment-specific paths stay local.
 
-| Constant                 | Default                        | Description                                                   |
-|--------------------------|--------------------------------|---------------------------------------------------------------|
-| `MESSAGES_FILE`          | path to `messages.jsonl`       | Full path to the JSONL archive file                           |
-| `ATTACHMENTS_DIR`        | `<archive dir>/attachments/`   | Directory containing attachment files                         |
-| `OUTBOX_DIR`             | path to outbox directory       | Directory where outgoing message files are written            |
-| `POLL_INTERVAL`          | `1.0`                          | Seconds between file-change checks                            |
-| `SLIDESHOW_INTERVAL`     | `4.0`                          | Seconds per slide during auto-advance                         |
-| `VIDEO_AUTOPLAY_DELAY`   | `3`                            | Countdown seconds before a video slide auto-plays             |
-| `QUICK_MESSAGES`         | `['Yes', 'No', 'Perhaps']`     | Predefined replies shown in the quick-message overlay         |
-| `IDLE_NOTIFICATION_DELAY`| `1`                            | Minutes of inactivity before showing a new-message notification |
-| `LED_PIN_1`              | `5`                            | BCM GPIO pin for notification LED 1 (header pin 29)           |
-| `LED_PIN_2`              | `6`                            | BCM GPIO pin for notification LED 2 (header pin 31)           |
-| `LED_BLINK_INTERVAL`     | `10`                           | Seconds per half-cycle for the LED blink                      |
+`archive_dir` and `outbox_dir` are **required** — the app exits with an error message if either is missing. All other keys are optional and fall back to the defaults shown below.
+
+| Key                      | Required | Default                        | Description                                                   |
+|--------------------------|----------|--------------------------------|---------------------------------------------------------------|
+| `archive_dir`            | ✓        | —                              | Path to the JSONL archive directory                           |
+| `attachments_dir`        |          | `<archive_dir>/attachments`    | Directory containing attachment files                         |
+| `outbox_dir`             | ✓        | —                              | Directory where outgoing message files are written            |
+| `poll_interval`          |          | `1.0`                          | Seconds between file-change checks                            |
+| `slideshow_interval`     |          | `4.0`                          | Seconds per slide during auto-advance                         |
+| `video_autoplay_delay`   |          | `3`                            | Countdown seconds before a video slide auto-plays             |
+| `quick_messages`         |          | `["Yes", "No", "Perhaps"]`     | Predefined replies shown in the quick-message overlay         |
+| `idle_notification_delay`|          | `1`                            | Minutes of inactivity before showing a new-message notification |
+| `led_pin_1`              |          | `5`                            | BCM GPIO pin for notification LED 1 (header pin 29)           |
+| `led_pin_2`              |          | `6`                            | BCM GPIO pin for notification LED 2 (header pin 31)           |
+| `led_blink_interval`     |          | `10`                           | Seconds per half-cycle for the LED blink                      |
 
 LEDs are wired active-low (GPIO HIGH = LED off). `gpiozero` is used to drive them; if the library is unavailable the feature is silently disabled.
 
@@ -165,8 +167,10 @@ An external process is expected to pick up the file, deliver it, and delete it. 
 
 ```
 chat_kiosk/
-├── chat_kiosk.py      # main application
-├── gpio_joystick.py   # GPIO → uinput joystick daemon (run separately)
-├── requirements.txt   # Python dependencies
-└── .venv/             # virtual environment (not committed)
+├── chat_kiosk.py           # main application
+├── chat_kiosk.json         # deployment config (gitignored — copy from .example)
+├── chat_kiosk.json.example # template documenting all config keys
+├── gpio_joystick.py        # GPIO → uinput joystick daemon (run separately)
+├── requirements.txt        # Python dependencies
+└── .venv/                  # virtual environment (not committed)
 ```
