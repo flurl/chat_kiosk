@@ -1047,19 +1047,24 @@ class ChatKioskApp(App):
             self._loaded_msgs.append(m)
             self._chat.add_message(m)
             self._galleries = self._collect_galleries(self._loaded_msgs)
-            imgs = image_attachments(m)
             outgoing = m.get('is_outgoing', m.get('is_synced', False))
-            if imgs and not outgoing:
-                self.open_slideshow(
-                    [(str(attachment_path(m['timestamp'], a)), 'image') for a in imgs])
-            vids = video_attachments(m)
-            if vids and not outgoing:
-                self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
-            if (idle
-                    and not outgoing
-                    and self._overlay is None
-                    and self._video_proc is None):
+            if not outgoing and self._overlay is not None:
+                # New message arrived while gallery is open — close gallery and notify
+                self.close_slideshow()
                 self.open_notification(m)
+            else:
+                imgs = image_attachments(m)
+                if imgs and not outgoing:
+                    self.open_slideshow(
+                        [(str(attachment_path(m['timestamp'], a)), 'image') for a in imgs])
+                vids = video_attachments(m)
+                if vids and not outgoing:
+                    self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
+                if (idle
+                        and not outgoing
+                        and self._overlay is None
+                        and self._video_proc is None):
+                    self.open_notification(m)
 
         if new_msgs:
             if self._overlay:
