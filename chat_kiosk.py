@@ -245,7 +245,7 @@ class MessageBubble(BoxLayout):
             height=dp(60),      # placeholder; updated by content height chain
             **kwargs,
         )
-        sent   = msg.get('is_synced', False)   # synced = sent from our account
+        sent   = msg.get('is_outgoing', msg.get('is_synced', False))
         text   = msg.get('text') or ''
         ts     = msg.get('timestamp', 0)
         source = msg.get('source_name') or msg.get('source', '')
@@ -1031,14 +1031,15 @@ class ChatKioskApp(App):
             self._chat.add_message(m)
             self._galleries = self._collect_galleries(self._loaded_msgs)
             imgs = image_attachments(m)
-            if imgs and not m.get('is_synced', False):
+            outgoing = m.get('is_outgoing', m.get('is_synced', False))
+            if imgs and not outgoing:
                 self.open_slideshow(
                     [(str(attachment_path(m['timestamp'], a)), 'image') for a in imgs])
             vids = video_attachments(m)
-            if vids and not m.get('is_synced', False):
+            if vids and not outgoing:
                 self.open_video([str(attachment_path(m['timestamp'], a)) for a in vids])
             if (idle
-                    and not m.get('is_synced', False)
+                    and not outgoing
                     and self._overlay is None
                     and self._video_proc is None):
                 self.open_notification(m)
