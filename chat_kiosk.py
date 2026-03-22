@@ -395,11 +395,11 @@ class MessageBubble(BoxLayout):
 class SlideshowOverlay(FloatLayout):
     """Full-screen image carousel shown on top of the chat."""
 
-    def __init__(self, galleries: list[list[str]], gallery_idx: int = 0, **kwargs):
+    def __init__(self, galleries: list[dict], gallery_idx: int = 0, **kwargs):
         super().__init__(**kwargs)
         self._galleries   = galleries
         self._gallery_idx = gallery_idx
-        self._paths       = galleries[gallery_idx] if galleries else []
+        self._paths       = galleries[gallery_idx]['items'] if galleries else []
         self._idx             = 0
         self._at_end          = False
         self._timer           = None
@@ -416,8 +416,8 @@ class SlideshowOverlay(FloatLayout):
 
         # image widget
         self._img = Image(
-            size_hint=(0.88, 0.82),
-            pos_hint={'center_x': 0.5, 'center_y': 0.52},
+            size_hint=(0.88, 0.77),
+            pos_hint={'center_x': 0.5, 'center_y': 0.48},
             allow_stretch=True,
             keep_ratio=True,
         )
@@ -427,8 +427,8 @@ class SlideshowOverlay(FloatLayout):
         self._vid_label = Label(
             text='',
             markup=True,
-            size_hint=(0.88, 0.82),
-            pos_hint={'center_x': 0.5, 'center_y': 0.52},
+            size_hint=(0.88, 0.77),
+            pos_hint={'center_x': 0.5, 'center_y': 0.48},
             halign='center',
             valign='middle',
             color=C_TEXT,
@@ -437,11 +437,27 @@ class SlideshowOverlay(FloatLayout):
 
         # slide counter  "2 / 4"
         self._ctr = Label(
-            size_hint=(1, None), height=dp(44),
-            pos_hint={'center_x': 0.5, 'top': 0.97},
+            size_hint=(1, None), height=dp(36),
+            pos_hint={'center_x': 0.5, 'top': 0.99},
             font_size=sp(22), color=C_TEXT,
         )
         self.add_widget(self._ctr)
+
+        # gallery text header — shows first words of the message, with ellipsis
+        self._header = Label(
+            text=(galleries[gallery_idx]['text'] if galleries else ''),
+            size_hint=(0.80, None),
+            height=dp(34),
+            pos_hint={'center_x': 0.5, 'top': 0.93},
+            font_size=sp(18),
+            color=C_TEXT,
+            halign='center',
+            valign='middle',
+            shorten=True,
+            shorten_from='right',
+        )
+        self._header.bind(width=lambda w, v: setattr(w, 'text_size', (v, None)))
+        self.add_widget(self._header)
 
         def _btn(text, pos_hint, callback, size=(dp(80), dp(110)), fs=48):
             b = Button(
@@ -484,7 +500,8 @@ class SlideshowOverlay(FloatLayout):
 
     def _switch_gallery(self, gallery_idx: int):
         self._gallery_idx = gallery_idx
-        self._paths       = self._galleries[gallery_idx]
+        self._paths       = self._galleries[gallery_idx]['items']
+        self._header.text = self._galleries[gallery_idx]['text']
 
     def _show_end(self):
         """Show an end-of-galleries message and set the sentinel index."""
@@ -1221,7 +1238,7 @@ class ChatKioskApp(App):
             self.open_quick_messages()
             return True
         elif key == 275 and self._galleries:            # right arrow — open first gallery
-            self.open_slideshow(self._galleries[0])
+            self.open_slideshow(self._galleries[0]['items'])
             return True
         return False
 
@@ -1338,7 +1355,7 @@ class ChatKioskApp(App):
 
     # ── gallery helpers ───────────────────────────────────────────────────────
     @staticmethod
-    def _collect_galleries(msgs: list[dict]) -> list[list[tuple]]:
+    def _collect_galleries(msgs: list[dict]) -> list[dict]:
         result = []
         for m in msgs:
             imgs = image_attachments(m)
@@ -1348,14 +1365,17 @@ class ChatKioskApp(App):
                 [(str(attachment_path(m['timestamp'], a)), 'video') for a in vids]
             )
             if items:
-                result.append(items)
+                result.append({
+                    'items': items,
+                    'text': (m.get('text') or '').strip(),
+                })
         return list(reversed(result))
 
     # ── slideshow control ────────────────────────────────────────────────────
     def open_slideshow(self, paths: list[str]):
         self.close_slideshow()
         gallery_idx = next(
-            (i for i, g in enumerate(self._galleries) if g == paths), 0)
+            (i for i, g in enumerate(self._galleries) if g['items'] == paths), 0)
         self._overlay = SlideshowOverlay(self._galleries, gallery_idx, size_hint=(1, 1))
         self._root.add_widget(self._overlay)
 
