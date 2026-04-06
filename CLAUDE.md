@@ -68,7 +68,7 @@ Current shortcut legend by mode:
 **Normal mode**
 | Input | Key | Action |
 |---|---|---|
-| ⚪ | Enter | Open quick-message overlay (only when text input is not focused) |
+| ⚪ | Enter | Open quick-message overlay (only when text input is not focused or is empty) |
 | 🔵 | ← | (no-op) |
 | 🟡 | → | Open gallery (newest message with images) |
 | ↺ | ↑ | Scroll message list up (toward older messages) |

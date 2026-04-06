@@ -911,7 +911,9 @@ class ChatScreen(BoxLayout):
         text = self._input.text.strip()
         if text:
             self._input.text = ''
-            App.get_running_app().send_message(text)
+            app = App.get_running_app()
+            app._just_sent = True
+            app.send_message(text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -933,6 +935,7 @@ class ChatKioskApp(App):
         self._video_poll    = None   # Clock handle for exit detection
         self._pending            = {}    # outbox Path → pending MessageBubble
         self._quick_overlay      = None
+        self._just_sent          = False   # set by _send to block overlay on same Enter
         self._notification       = None
         self._last_interaction   = time.time()
         self._root.add_widget(self._chat)
@@ -1196,6 +1199,10 @@ class ChatKioskApp(App):
     # ── keyboard ─────────────────────────────────────────────────────────────
     def _on_key_down(self, _win, key, _sc, _cp, _mod):
         self._last_interaction = time.time()
+        if self._just_sent:
+            self._just_sent = False
+            if key == 13:
+                return True
         if self._notification is not None:
             if key in (13, 27, 276):                        # enter, escape, left
                 self.close_notification()
@@ -1239,7 +1246,7 @@ class ChatKioskApp(App):
         elif key == 274:                                    # down — scroll toward newer messages
             self._scroll_chat(-1)
             return True
-        elif key == 13 and not self._chat._input.focus:   # enter
+        elif key == 13 and not self._just_sent and not self._chat._input.focus:   # enter
             self.open_quick_messages()
             return True
         elif key == 275 and self._galleries:            # right arrow — open first gallery
